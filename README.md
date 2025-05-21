@@ -69,7 +69,7 @@ Esto permite que la app muestre una versión neutral de cada grupo de noticias y
 
 ## 📷 Demo
 
-
+[Ver demo (20/05/2025](https://github.com/user-attachments/assets/cdc97bb6-300f-4396-a17c-a06e766f63a8)
 
 ---
 
