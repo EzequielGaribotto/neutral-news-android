@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <data>
+
+        <variable
+            name="bean"
+            type="com.example.neutralnews_android.data.bean.tag.TagBean" />
+
+        <variable
+            name="isViewOnly"
+            type="boolean" />
+
+    </data>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/clMain"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="5dp"
+        android:layout_marginVertical="4dp"
+        android:background="@{bean.selected ? @drawable/ic_bg_rd_blue_v2_60 : @drawable/ic_bg_rd_gray90_60}"
+        tools:background="@drawable/ic_bg_rd_blue_v2_60">
+
+        <TextView
+            android:id="@+id/txtTitle"
+            style="@style/TextView.montserrat_semi_bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="15dp"
+            android:paddingVertical="11dp"
+            android:text="@{bean.name}"
+            android:textColor="@{isViewOnly ? @color/black20 : ( bean.selected ? @color/black10 : @color/black50)}"
+            android:textSize="14sp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="CustomTag"
+            tools:textColor="@color/white" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

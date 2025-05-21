@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+      xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/menu_date_filter_header"
+        android:title="Filtrar por fecha"
+        android:enabled="false" />
+    
+    <item
+        android:id="@+id/menu_date_all"
+        android:title="Todo" />
+    
+    <item
+        android:id="@+id/menu_date_today"
+        android:title="Hoy" />
+    
+    <item
+        android:id="@+id/menu_date_yesterday"
+        android:title="Ayer" />
+    
+    <item
+        android:id="@+id/menu_date_day1"
+        android:title="Día 1" />
+    
+    <item
+        android:id="@+id/menu_date_day2"
+        android:title="Día 2" />
+    
+    <item
+        android:id="@+id/menu_date_day3"
+        android:title="Día 3" />
+    
+    <item
+        android:id="@+id/menu_date_day4"
+        android:title="Día 4" />
+    
+    <item
+        android:id="@+id/menu_date_day5"
+        android:title="Día 5" />
+    
+    <item
+        android:id="@+id/menu_date_older"
+        android:title="Antes" />
+</menu>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_main"
+    app:startDestination="@+id/todayFragment">
+
+    <fragment
+        android:id="@+id/todayFragment"
+        android:name="com.example.neutralnews_android.ui.main.today.TodayFragment"
+        android:label="@string/today_title"
+        tools:layout="@layout/fragment_today" />
+    <fragment
+        android:id="@+id/settingsFragment"
+        android:name="com.example.neutralnews_android.ui.main.settings.SettingsFragment"
+        android:label="@string/settings_title"
+        tools:layout="@layout/fragment_settings" />
+</navigation>

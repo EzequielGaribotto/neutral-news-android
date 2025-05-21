@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App General -->
+    <string name="app_name">Neutral News</string>
+    <string name="custom_toast">Texto del Toast personalizado</string>
+    <!-- API & Network -->
+    <string name="something_went_wrong">Algo salió mal</string>
+    <string name="please_check_the_internet_connectivity">Por favor, verifica la conectividad a Internet.</string>
+    <string name="no_data_found">No se encontraron datos</string>
+    <string name="network_error">Error de red</string>
+    <string name="loading">Cargando…</string>
+    <string name="version_count">Versión %1$s</string>
+    <string name="api_call_message">Estamos cargando los datos</string>
+
+    <!-- Date & Time -->
+    <string name="time_ago_now">Hace unos momentos</string>
+    <string name="time_ago_seconds">Hace %1$d segundos</string>
+    <string name="time_ago_minute">Hace %1$d minuto</string>
+    <string name="time_ago_minutes">Hace %1$d minutos</string>
+    <string name="time_ago_hour">Hace %1$d h</string>
+    <string name="time_ago_hours">Hace %1$d h</string>
+    <string name="time_ago_yesterday_at">Ayer a las %1$s</string>
+    <string name="time_ago_days">Hace %1$d días</string>
+    <string name="time_ago_month">Hace %1$d mes</string>
+    <string name="time_ago_months">Hace %1$d meses</string>
+
+    <!-- Common UI Elements -->
+    <string name="online">En línea</string>
+    <string name="offline">Desconectado</string>
+    <string name="yes">Sí</string>
+    <string name="no">No</string>
+    <string name="cancel">Cancelar</string>
+    <string name="edit">Editar</string>
+    <string name="delete">Eliminar</string>
+    <string name="save">Guardar</string>
+    <string name="done">Done</string>
+    <string name="clear_all">Clear</string>
+    <string name="back">Back</string>
+    <string name="txtEllipsis">…</string>
+    <string name="minus">-</string>
+    <string name="plus">+</string>
+
+    <!-- Navigation & Menu -->
+    <string name="home">Inicio</string>
+    <string name="watchlist">Tu lista</string>
+    <string name="my_watchlist">Mi lista</string>
+    <string name="search">Buscar</string>
+    <string name="trending">Tendencias</string>
+    <string name="explore_title">Explorar</string>
+    <string name="today_title">Hoy</string>
+    <string name="settings_title">Configuración</string>
+    <string name="filter_title">Filtro</string>
+
+    <!-- Loading Screen -->
+    <string name="fetching_user_data">Por favor, espera mientras cargamos noticias.</string>
+    <string name="random_image">Imagen aleatoria</string>
+
+    <!-- Permissions -->
+    <string name="storage_permission_missing">¡Falta el permiso de almacenamiento!</string>
+    <string name="storage_permission_missing_message">Esta aplicación necesita acceso al almacenamiento de tu dispositivo para subir y mostrar imágenes.</string>
+    <string name="camera_permission_missing">¡Falta el permiso de la cámara!</string>
+    <string name="camera_permission_missing_message">Esta aplicación necesita acceso a tu cámara para tomar fotos. Por favor, otorga el permiso para continuar.</string>
+    <string name="take_a_photo">Tomar una foto</string>
+    <string name="select_from_gallery">Seleccionar de la galería</string>
+
+    <!-- News Items -->
+    <string name="news_image">News image</string>
+    <string name="open_link">Open Link</string>
+    <string name="neutrality">Neutralidad</string>
+    <string name="read_more_source">Leer más en la fuente</string>
+    <string name="news_details">Detalles de la noticia</string>
+    <string name="neutral_new">Noticia neutral</string>
+    <string name="no_news_found">No se encontraron noticias</string>
+    <string name="neutral_score_info">Puntuación de neutralidad: %1$s\n</string>
+    <string name="source_coverage_count_info">Cubierta por %1$s medios\n</string>
+
+    <!-- Search -->
+    <string name="no_search_results_found">No se encontraron resultados</string>
+    <string name="search_news">Buscar noticias</string>
+    <string name="clear_search">Limpiar búsqueda</string>
+
+    <!-- Media Sources -->
+    <string name="media">Media</string>
+    <string name="abc">ABC</string>
+    <string name="el_pais">El País</string>
+    <string name="rtve">RTVE</string>
+    <string name="media_one">ABC</string>
+    <string name="media_two">El País</string>
+    <string name="media_three">RTVE</string>
+    <string name="media_four">Antena 3</string>
+    <string name="media_five">Cope</string>
+    <string name="media_six">Diariored</string>
+    <string name="media_seven">El Economista</string>
+    <string name="media_eight">El Salto</string>
+    <string name="media_nine">El Diario</string>
+    <string name="media_ten">Expansión</string>
+    <string name="media_eleven">La Sexta</string>
+    <string name="media_twelve">El Mundo</string>
+    <string name="media_thirteen">Es Diario</string>
+    <string name="media_fourteen">El Periódico</string>
+    <string name="media_fifteen">La Vanguardia</string>
+    <string name="media_sixteen">Libertad Digital</string>
+
+    <!-- News Categories -->
+    <string name="categories">Categories</string>
+    <string name="category_sports">Deportes</string>
+    <string name="category_politics">Política</string>
+    <string name="category_economy">Economía</string>
+    <string name="category_entertainment">Entretenimiento</string>
+    <string name="category_health">Salud</string>
+    <string name="category_technology">Tecnología</string>
+    <string name="category_environment">Medio ambiente</string>
+    <string name="category_education">Educación</string>
+    <string name="category_lifestyle">Estilo de vida</string>
+    <string name="category_business">Negocios</string>
+    <string name="category_culture">Cultura</string>
+    <string name="category_society">Sociedad</string>
+    <string name="category_international">Internacional</string>
+    <string name="category_science">Ciencia</string>
+    <string name="category_games">E-Sports</string>
+    <string name="category_wellness">Bienestar</string>
+    <string name="category_innovation">Innovación</string>
+    <string name="category_nature">Naturaleza</string>
+    <string name="category_various">Varios</string>
+    <string name="category_others">Otros</string>
+    <string name="category_uncategorized">Sin categoría</string>
+
+    <!-- Settings -->
+    <string name="title_size">Tamaño de los títulos de las noticias</string>
+    <string name="description_size">Tamaño del cuerpo de la noticia</string>
+    <string name="details_text_size">Tamaño del cuerpo de la noticia en pantalla de detalles</string>
+    <string name="date_format">Formato de fecha:</string>
+    <string name="actual_title_size">"Tamaño actual: %1$s"</string>
+    <string name="actual_details_text_size">"Tamaño actual: %1$s"</string>
+    <string name="actual_description_size">"Tamaño actual: %1$s"</string>
+    <string name="actual_date_format">Formato de fecha actual: %1$s</string>
+
+    <!-- Errors -->
+    <string name="error_play_services">Se requiere Google Play Services para usar esta aplicación</string>
+    <string name="error_found">Se encontró un error</string>
+
+
+    <!-- Sort news -->
+    <string name="sort_news">Ordenar noticias</string>
+    <string name="sort_by">Ordenar por</string>
+    <string name="sort_by_date">Publicación</string>
+    <string name="sort_by_updated">Actualización</string>
+    <string name="sort_by_relevance">Relevancia</string>
+    <string name="sort_by_sources">Popularidad</string>
+    <string name="image_disclaimer">Imagen extraída de %1$s, ver su noticia al final de la página</string>
+
+    <string name="n_n">\n\n</string>
+    <string name="empty_string"></string>
+</resources>

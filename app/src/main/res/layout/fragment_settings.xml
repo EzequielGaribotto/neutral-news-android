@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:context=".ui.main.today.TodayFragment">
+
+    <data>
+
+        <variable
+            name="vm"
+            type="com.example.neutralnews_android.ui.main.settings.SettingsFragmentVM" />
+
+        <variable
+            name="filterCount"
+            type="Integer" />
+
+        <import type="android.view.View" />
+    </data>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/clMain"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/black_95"
+        android:fitsSystemWindows="true">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:id="@+id/imgBack"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:contentDescription="@string/app_name"
+                android:onClick="@{(v)->vm.onClick(v)}"
+                android:src="@drawable/ic_arrow_left"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <TextView
+                android:id="@+id/tvTitle"
+                style="@style/TextView.montserrat_bold"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_title"
+                android:textColor="@color/white"
+                android:textSize="24sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <ImageView
+                android:id="@+id/btnSaveSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:clickable="true"
+                android:contentDescription="@string/save"
+                android:focusable="true"
+                android:onClick="@{(v)->vm.onClick(v)}"
+                android:src="@drawable/baseline_save_24"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clTitleSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clHeader">
+
+            <TextView
+                android:id="@+id/tvTitleSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/title_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <!-- Comments Edit Text -->
+            <EditText
+                android:id="@+id/etTitleFontSize"
+                style="@style/TextInputEditText_Round_Border_7"
+                android:layout_width="50dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="12dp"
+                android:gravity="top"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:maxLines="1"
+                android:minLines="1"
+                android:text="@={vm.fieldTitleFontSize}"
+                app:layout_constraintStart_toStartOf="@id/tvTitleSize"
+                app:layout_constraintTop_toBottomOf="@id/tvTitleSize" />
+
+            <TextView
+                android:id="@+id/tvActualTextSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/actual_title_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintBottom_toBottomOf="@id/etTitleFontSize"
+                app:layout_constraintStart_toEndOf="@id/etTitleFontSize"
+                app:layout_constraintTop_toTopOf="@id/etTitleFontSize" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clDescriptionSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clTitleSize">
+
+            <TextView
+                android:id="@+id/tvDescriptionSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/description_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <EditText
+                android:id="@+id/etDescriptionFontSize"
+                style="@style/TextInputEditText_Round_Border_7"
+                android:layout_width="50dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="12dp"
+                android:gravity="top"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:maxLines="1"
+                android:minLines="1"
+                android:text="@={vm.fieldDescriptionFontSize}"
+                app:layout_constraintStart_toStartOf="@id/tvDescriptionSize"
+                app:layout_constraintTop_toBottomOf="@id/tvDescriptionSize" />
+
+            <TextView
+                android:id="@+id/tvActualDescriptionSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/actual_description_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintBottom_toBottomOf="@id/etDescriptionFontSize"
+                app:layout_constraintStart_toEndOf="@id/etDescriptionFontSize"
+                app:layout_constraintTop_toTopOf="@id/etDescriptionFontSize" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clDetailsTextSize"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clDescriptionSize">
+
+            <TextView
+                android:id="@+id/tvDetailsTextSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/details_text_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <EditText
+                android:id="@+id/etDetailsTextFontSize"
+                style="@style/TextInputEditText_Round_Border_7"
+                android:layout_width="50dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="12dp"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:textColor="@color/white"
+                android:maxLines="1"
+                android:minLines="1"
+                android:text="@={vm.fieldDetailsTextFontSize}"
+                app:layout_constraintStart_toStartOf="@id/tvDetailsTextSize"
+                app:layout_constraintTop_toBottomOf="@id/tvDetailsTextSize"
+                tools:text="12"/>
+
+            <TextView
+                android:id="@+id/tvActualDetailsTextSize"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/actual_details_text_size"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintBottom_toBottomOf="@id/etDetailsTextFontSize"
+                app:layout_constraintStart_toEndOf="@id/etDetailsTextFontSize"
+                app:layout_constraintTop_toTopOf="@id/etDetailsTextFontSize" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clDateFormat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clDetailsTextSize">
+
+            <TextView
+                android:id="@+id/tvDateFormat"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/date_format"
+                android:textColor="@color/white"
+                android:textSize="16dp"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <Spinner
+                android:id="@+id/spinnerDateFormat"
+                style="@style/TextInputEditText_Round_Border_7"
+                android:layout_width="100dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="12dp"
+                android:entries="@array/date_format_options"
+                android:tag="@{vm.fieldDateFormat}"
+                android:textColor="@color/black10"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/tvDateFormat"
+                tools:text="DD-MM-YYYY" />
+
+            <TextView
+                android:id="@+id/tvSetDateFormat"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@{vm.fieldDateFormat}"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                app:layout_constraintBottom_toBottomOf="@id/spinnerDateFormat"
+                app:layout_constraintStart_toStartOf="@id/spinnerDateFormat"
+                app:layout_constraintEnd_toEndOf="@id/spinnerDateFormat"
+                app:layout_constraintTop_toTopOf="@id/spinnerDateFormat"
+                tools:text="DD-MM-YYYY" />
+            <TextView
+                android:id="@+id/tvActualDateFormat"
+                style="@style/TextView.montserrat_light"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:text="@string/actual_date_format"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                app:layout_constraintBottom_toBottomOf="@id/spinnerDateFormat"
+                app:layout_constraintStart_toEndOf="@id/spinnerDateFormat"
+                app:layout_constraintTop_toTopOf="@id/spinnerDateFormat" />
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

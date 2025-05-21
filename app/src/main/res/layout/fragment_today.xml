@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:context=".ui.main.today.TodayFragment">
+
+    <data>
+        <variable
+            name="vm"
+            type="com.example.neutralnews_android.ui.main.today.TodayFragmentVM" />
+
+        <variable
+            name="filterCount"
+            type="Integer" />
+
+        <import type="android.view.View" />
+    </data>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/clMain"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/black_95"
+        android:fitsSystemWindows="true">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!-- TextView with the title of the app and a logo -->
+            <TextView
+                android:id="@+id/tvTitle"
+                style="@style/TextView.montserrat_bold"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="@color/white"
+                android:textSize="24sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                tools:text="Neutral News" />
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/clFilter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@id/clHeader">
+
+                <!-- Sort Button - Remove the onClick attribute -->
+                <ImageView
+                    android:id="@+id/imgDateFilter"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="16dp"
+                    android:contentDescription="@string/sort_news"
+                    android:src="@drawable/ic_calendar"
+                    app:layout_constraintEnd_toStartOf="@id/imgSort"
+                    app:layout_constraintTop_toTopOf="@id/imgSort"
+                    app:layout_constraintBottom_toBottomOf="@id/imgSort"
+                    />
+
+                <ImageView
+                    android:id="@+id/imgSort"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="16dp"
+                    android:contentDescription="@string/sort_news"
+                    android:src="@drawable/ic_sort"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/imgFilter"
+                    app:layout_constraintTop_toTopOf="parent" />
+
+                <ImageView
+                    android:id="@+id/imgFilter"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center_vertical"
+                    android:contentDescription="@string/app_name"
+                    android:onClick="@{(v)->vm.onClick(v)}"
+                    android:src="@drawable/ic_filter"
+                    android:visibility="visible"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    tools:visibility="visible" />
+
+                <TextView
+                    style="@style/TextView.montserrat_medium"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ic_bg_rd_white_10"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:text="@{filterCount.toString()}"
+                    android:textColor="@color/black"
+                    android:textSize="8sp"
+                    android:visibility="@{filterCount > 0 ? View.VISIBLE : View.GONE}"
+                    app:layout_constraintEnd_toEndOf="@id/imgFilter"
+                    app:layout_constraintStart_toEndOf="@id/imgFilter"
+                    app:layout_constraintTop_toTopOf="@id/imgFilter"
+                    tools:ignore="SmallSp"
+                    tools:text="3"
+                    tools:visibility="gone" />
+            </androidx.constraintlayout.widget.ConstraintLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- Search Layout -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/clSearch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginTop="16dp"
+            app:layout_constraintTop_toBottomOf="@id/clHeader">
+            <androidx.cardview.widget.CardView
+                android:id="@+id/cardViewSearch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/dark_gray"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="2dp"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <ImageView
+                        android:id="@+id/ivSearch"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_marginStart="12dp"
+                        android:src="@drawable/ic_search"
+                        app:layout_constraintBottom_toBottomOf="parent"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:tint="@color/gray_light" />
+
+                    <EditText
+                        android:id="@+id/etSearch"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@null"
+                        android:hint="@string/search_news"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:paddingHorizontal="8dp"
+                        android:textColor="@color/white"
+                        android:textColorHint="@color/gray_light"
+                        android:textSize="16sp"
+                        app:layout_constraintEnd_toStartOf="@id/btnClearSearch"
+                        app:layout_constraintStart_toEndOf="@id/ivSearch"
+                        app:layout_constraintTop_toTopOf="parent" />
+
+                    <ImageView
+                        android:id="@+id/btnClearSearch"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:contentDescription="@string/clear_search"
+                        android:padding="12dp"
+                        android:src="@android:drawable/ic_menu_close_clear_cancel"
+                        android:visibility="@{vm.searchQuery.empty ? View.GONE : View.VISIBLE}"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:tint="@color/gray_light"
+                        tools:visibility="visible" />
+                </androidx.constraintlayout.widget.ConstraintLayout>
+            </androidx.cardview.widget.CardView>
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginHorizontal="4dp"
+            android:paddingVertical="4dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clSearch">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvTodayNews"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_marginTop="8dp"
+                    tools:listitem="@layout/row_news" />
+
+                <ProgressBar
+                    android:id="@+id/paginationLoader"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal|bottom"
+                    android:layout_marginBottom="16dp"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+        <!-- No Results Message -->
+        <TextView
+            android:id="@+id/tvNoResults"
+            style="@style/TextView.montserrat_medium"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No results found"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:visibility="@{vm.showNoResults ? View.VISIBLE : View.GONE}"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/clSearch"
+            tools:visibility="gone" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

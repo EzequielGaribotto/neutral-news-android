@@ -1,0 +1,145 @@
+<resources>
+    <!-- Base application theme. -->
+    <style name="Theme.NeutralNews_Android" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorAccent">@color/black</item>
+        <item name="popupMenuStyle">@style/CompactPopupMenu</item>
+        <item name="android:itemTextAppearance">@style/CompactPopupMenuTextAppearance</item>
+    </style>
+
+    <!-- TextViews -->
+    <!-- 800 -->
+    <style name="TextView.montserrat_extra_bold">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_extra_bold</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 700 -->
+    <style name="TextView.montserrat_bold">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_bold</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 600 -->
+    <style name="TextView.montserrat_semi_bold">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_semi_bold</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 500 -->
+    <style name="TextView.montserrat_medium">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_medium</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 400 -->
+    <style name="TextView.montserrat_regular">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_regular</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 300 -->
+    <style name="TextView.montserrat_light">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_light</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 200 -->
+    <style name="TextView.montserrat_extra_light">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_extra_light</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- 100 -->
+    <style name="TextView.montserrat_thin">
+        <item name="android:textSize">12sp</item>
+        <item name="fontFamily">@font/montserrat_thin</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="TextView" parent="android:Widget.TextView">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/black</item>
+    </style>
+
+
+    <!-- Dialog -->
+    <style name="Dialog" parent="Theme.MaterialComponents.Light.Dialog">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@style/Dialog.Window</item>
+    </style>
+
+    <style name="Dialog.Window" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/zoom_normal</item>
+        <item name="android:windowExitAnimation">@anim/zoom_out</item>
+    </style>
+
+    <style name="TextInputEditText_Round_Border_7">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/black10</item>
+        <item name="android:background">@drawable/ic_bg_edt_txt</item>
+        <item name="android:textColorHint">@color/gray60</item>
+        <item name="fontFamily">@font/montserrat_regular</item>
+        <item name="android:textCursorDrawable">@drawable/cursor_color</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:paddingVertical">16dp</item>
+        <item name="android:paddingHorizontal">16dp</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- DatePicker -->
+    <style name="ThemeOverlay.App.DatePicker" parent="@style/ThemeOverlay.MaterialComponents.MaterialCalendar">
+        <item name="colorPrimary">@color/orange</item>
+        <item name="colorOnPrimary">@color/blackV2</item>
+        <item name="fontFamily">@font/montserrat_regular</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.App.SmallComponent</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.App.MediumComponent</item>
+        <item name="materialCalendarHeaderToggleButton">@style/Widget.AppTheme.MaterialCalendar.HeaderToggleButton</item>
+    </style>
+
+    <style name="ShapeAppearance.App.SmallComponent" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerFamily">rounded</item>
+    </style>
+
+    <style name="ShapeAppearance.App.MediumComponent" parent="ShapeAppearance.MaterialComponents.MediumComponent">
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay_All_7" parent="">
+        <item name="cornerSize">7dp</item>
+        <item name="cornerFamily">rounded</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay_All_8" parent="">
+        <item name="cornerSize">8dp</item>
+        <item name="cornerFamily">rounded</item>
+    </style>
+
+    <style name="Widget.AppTheme.MaterialCalendar.HeaderToggleButton" parent="Widget.MaterialComponents.MaterialCalendar.HeaderToggleButton">
+        <item name="android:visibility">gone</item>
+    </style>
+
+    <!-- Bottom Dialog Style -->
+    <style name="BottomDialogStyle" parent="Theme.Design.Light.BottomSheetDialog">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowSoftInputMode">adjustNothing</item>
+    </style>
+
+
+    <style name="ShapeAppearanceOverlay.MaterialComponents.RoundedImageView" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">18dp</item>
+    </style>
+</resources>

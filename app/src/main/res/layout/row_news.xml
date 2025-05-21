@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+    <data>
+        <import type="android.view.View" />
+        <variable
+            name="newsBean"
+            type="com.example.neutralnews_android.data.bean.news.NewsBean" />
+        <variable
+            name="callback"
+            type="com.example.neutralnews_android.di.adapter.SimpleRecyclerViewAdapter.SimpleCallback" />
+    </data>
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/clNews"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        android:onClick="@{() -> callback.onItemClick(clNews, newsBean)}"
+        android:background="@drawable/ic_bg_br_rd_black_v2_blue_18">
+
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/clImageContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <com.makeramen.roundedimageview.RoundedImageView
+            android:id="@+id/ivNewsPhoto"
+            imageUrl="@{newsBean.imageUrl}"
+            android:layout_width="match_parent"
+            android:layout_height="240dp"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/news_image"
+            android:scaleType="centerCrop"
+            android:visibility="@{newsBean.imageUrl != null ? View.VISIBLE : View.GONE}"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:riv_corner_radius_bottom_left="18dp"
+            app:riv_corner_radius_bottom_right="18dp"
+            app:riv_corner_radius_top_left="18dp"
+            app:riv_corner_radius_top_right="18dp"
+            tools:src="@drawable/new_image_sample" />
+
+        <View
+            android:id="@+id/gradientOverlay"
+            android:layout_width="0dp"
+            android:layout_height="120dp"
+            android:background="@drawable/white_gradient_bottom"
+            app:layout_constraintBottom_toBottomOf="@id/ivNewsPhoto"
+            app:layout_constraintEnd_toEndOf="@id/ivNewsPhoto"
+            app:layout_constraintStart_toStartOf="@id/ivNewsPhoto" />
+
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginVertical="6dp"
+            android:fontFamily="serif"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:text="@{newsBean.title}"
+            android:textColor="@color/black10"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            app:layout_constraintEnd_toEndOf="@id/gradientOverlay"
+            app:layout_constraintStart_toStartOf="@id/gradientOverlay"
+            app:layout_constraintBottom_toBottomOf="@id/gradientOverlay"
+            app:layout_constraintTop_toTopOf="@+id/gradientOverlay"
+            tools:text="@tools:sample/lorem/random" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</layout>

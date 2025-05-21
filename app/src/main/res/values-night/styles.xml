@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Estilo Base para Menús Desplegables en modo oscuro -->
+    <style name="CustomDropdownStyle" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+        <item name="android:textSize">13sp</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="android:paddingVertical">0dp</item>
+        <item name="android:minHeight">45dp</item>
+        <item name="boxBackgroundColor">#1F1F1F</item>
+        <item name="android:textColor">#E0E0E0</item>
+    </style>
+
+    <style name="CustomDropdownStyle.Minimal">
+        <item name="boxBackgroundColor">#1F1F1F</item>
+        <item name="boxStrokeColor">@color/colorPrimary</item>
+        <item name="boxCornerRadiusBottomEnd">8dp</item>
+        <item name="boxCornerRadiusBottomStart">8dp</item>
+        <item name="boxCornerRadiusTopEnd">8dp</item>
+        <item name="boxCornerRadiusTopStart">8dp</item>
+    </style>
+
+    <style name="CustomDropdownStyle.Rounded">
+        <item name="boxCornerRadiusBottomEnd">20dp</item>
+        <item name="boxCornerRadiusBottomStart">20dp</item>
+        <item name="boxCornerRadiusTopEnd">20dp</item>
+        <item name="boxCornerRadiusTopStart">20dp</item>
+        <item name="boxBackgroundColor">#2A2A2A</item>
+    </style>
+
+    <style name="CustomDropdownStyle.Border">
+        <item name="boxStrokeWidth">2dp</item>
+        <item name="boxBackgroundColor">#1F1F1F</item>
+        <item name="boxStrokeColor">@color/colorAccent</item>
+    </style>
+
+    <style name="CustomDropdownStyle.Compact">
+        <item name="android:minHeight">38dp</item>
+        <item name="boxBackgroundColor">#2A2A2A</item>
+        <item name="boxCornerRadiusBottomEnd">4dp</item>
+        <item name="boxCornerRadiusBottomStart">4dp</item>
+        <item name="boxCornerRadiusTopEnd">4dp</item>
+        <item name="boxCornerRadiusTopStart">4dp</item>
+    </style>
+</resources>

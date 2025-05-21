@@ -1,0 +1,34 @@
+<resources>
+    <!-- Estilo Base para Menús Desplegables -->
+    <style name="CustomDropdownStyle" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+        <item name="android:textSize">13sp</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="android:minHeight">45dp</item>
+    </style>
+
+    <!-- Estilo personalizado para menús popup compactos -->
+    <style name="CompactPopupMenu" parent="Widget.AppCompat.PopupMenu">
+        <item name="android:popupBackground">@drawable/popup_background</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:itemPadding">2dp</item>
+        <item name="android:popupElevation">3dp</item>
+        <item name="android:dropDownWidth">250dp</item>
+        <item name="android:dropDownHorizontalOffset">0dp</item>
+    </style>
+
+    <style name="AppTheme.PopupOverlay" parent="ThemeOverlay.AppCompat.Light">
+        <item name="android:popupMenuStyle">@style/CompactPopupMenu</item>
+        <item name="android:textAppearanceSmallPopupMenu">@style/CompactPopupMenuTextAppearance</item>
+        <item name="android:textAppearanceLargePopupMenu">@style/CompactPopupMenuTextAppearance</item>
+    </style>
+
+    <style name="CompactPopupMenuTextAppearance" parent="TextAppearance.AppCompat.Small">
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="CompactPopupMenuHeader" parent="TextAppearance.AppCompat.Small">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/orange</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+</resources>

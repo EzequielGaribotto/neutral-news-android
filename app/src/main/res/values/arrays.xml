@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="rangeArray">
+        <item>0h</item>
+        <item>1:30h</item>
+        <item>2h</item>
+        <item>+3h</item>
+    </string-array>
+    <string-array name="date_format_options">
+        <item>Show</item>
+        <item>Don\'t Show</item>
+        <item>Full Date (DD-MM-YYYY)</item>
+        <item>Full Date (MM-DD-YYYY)</item>
+        <item>Full Date (YYYY-MM-DD)</item>
+        <item>Short Date (DD-MM)</item>
+        <item>Short Date (MM-DD)</item>
+        <item>Short Date (YYYY-MM)</item>
+        <item>Time Only (HH:mm)</item>
+        <item>Date and Time (DD-MM-YYYY HH:mm)</item>
+        <item>Date and Time (MM-DD-YYYY HH:mm)</item>
+        <item>Date and Time (YYYY-MM-DD HH:mm)</item>
+    </string-array>
+
+    <array name="year_range_values">
+        <item>1990</item>
+        <item>2024</item>
+    </array>
+
+    <!-- Opciones de ordenación -->
+    <string-array name="sort_options">
+        <item>Popularidad</item>
+        <item>Actualización</item>
+        <item>Título</item>
+        <item>Fecha</item>
+    </string-array>
+
+    <!-- Iconos de ordenación (nombres de drawables) -->
+    <string-array name="sort_icons">
+        <item>ic_popularity</item>
+        <item>ic_update</item>
+        <item>ic_title</item>
+        <item>ic_date</item>
+    </string-array>
+    
+    <string-array name="sort_descriptions">
+        <item>Ordena por número de fuentes</item>
+        <item>Ordena por fecha de última actualización</item>
+        <item>Ordena alfabéticamente por título</item>
+        <item>Ordena por fecha de publicación</item>
+    </string-array>
+</resources>
