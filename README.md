@@ -14,12 +14,12 @@ Se ha desarrollado una app Android completamente funcional, pensada para facilit
 
 ## 📑 Índice
 
-- [📰 ¿Qué es Neutral News?](#qué-es-neutral-news)  
-- [📱 ¿Cómo funciona la app Android?](#cómo-funciona-la-app-android)  
-- [🛠️ Tecnologías utilizadas](#tecnologías-utilizadas)  
-- [🧠 Inteligencia Artificial integrada](#inteligencia-artificial-integrada)  
-- [📷 Capturas de pantalla](#capturas-de-pantalla)  
-- [📍 Formación](#formación)  
+- [📰 ¿Qué es Neutral News?](#-qué-es-neutral-news)  
+- [📱 ¿Cómo funciona la app Android?](#-cómo-funciona-la-app-android)  
+- [🛠️ Tecnologías utilizadas](#-tecnologías-utilizadas)  
+- [🧠 Inteligencia Artificial integrada](#-inteligencia-artificial-integrada)  
+- [📷 Capturas de pantalla](#-capturas-de-pantalla)  
+- [📍 Formación](#-formación)  
 
 ---
 
