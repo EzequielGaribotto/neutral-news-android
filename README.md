@@ -16,9 +16,9 @@ Se ha desarrollado una app Android completamente funcional, pensada para facilit
 
 - [📰 ¿Qué es Neutral News?](#-qué-es-neutral-news)  
 - [📱 ¿Cómo funciona la app Android?](#-cómo-funciona-la-app-android)  
-- [🛠️ Tecnologías utilizadas](#-tecnologías-utilizadas)  
+- [🛠️ Tecnologías utilizadas](#%EF%B8%8F-tecnologías-utilizadas)  
 - [🧠 Inteligencia Artificial integrada](#-inteligencia-artificial-integrada)  
-- [📷 Capturas de pantalla](#-capturas-de-pantalla)  
+- [📷 Demo](#-demo)  
 - [📍 Formación](#-formación)  
 
 ---
@@ -48,14 +48,10 @@ La app Android permite acceder fácilmente a estas noticias, filtradas por categ
 | Diseño UI/UX              | XML Layouts, Material Design, Data Binding                             |
 | Arquitectura              | MVVM (Model-View-ViewModel), Repository Pattern                        |
 | Inyección de dependencias | Hilt, Dagger                                                          |
-| Consumo de API            | Retrofit                                                             |
 | Base de datos local       | Room (DAO)                                                           |
 | Base de datos remota      | Firebase Cloud Firestore                                             |
 | Gestión de versiones      | Git, GitHub                                                         |
-| CI/CD                     | GitHub Actions (planificado), integración con Firebase Hosting      |
 | Entorno de desarrollo     | Android Studio, Gradle                                              |
-| Metodología de trabajo    | Kanban, planificación ágil                                          |
-| Cloud / DevOps            | Google Cloud Platform, Docker, AWS (planificado)                    |
 
 ---
 
@@ -71,11 +67,9 @@ Esto permite que la app muestre una versión neutral de cada grupo de noticias y
 
 ---
 
-## 📷 Capturas de pantalla
+## 📷 Demo
 
-| Pantalla de inicio | Vista de grupo de noticias | Noticia neutralizada |
-|--------------------|----------------------------|---------------------|
-| [Añadir imágenes]   | [Añadir imágenes]           | [Añadir imágenes]    |
+
 
 ---
 
