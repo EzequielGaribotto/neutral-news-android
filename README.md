@@ -1,9 +1,14 @@
-# Neutral News
+<h1 align="center">Neutral News</h1>
+<p align="center">Repositorio de la aplicación Android del proyecto de final de CFGS DAM</p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f6b051c2-4e50-4b4f-b6c1-9f26233d1eb1" alt="App Icon" width="332"/>
+</p>
 
-![App Icon](https://github.com/user-attachments/assets/f6b051c2-4e50-4b4f-b6c1-9f26233d1eb1)
+[Presentación](https://www.canva.com/design/DAGniT2itZA/xQ5kseKfUXHrKU7Y1SUJ8Q/view?utm_content=DAGniT2itZA&utm_campaign=designshare&utm_medium=link2&utm_source=uniquelinks&utlId=he99b512169)
 
-- [iOS](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/iOS/)
-- [Android](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/Android/)
+- [iOS](https://github.com/martiespinosa/neutral-news)
+- [Android](https://github.com/EzequielGaribotto/neutral-news-android)
+- [Backend](https://github.com/martiespinosa/neutral-news-backend)
 
 ## Indice
 - [Abstract](#abstract)
@@ -41,13 +46,4 @@ A lo largo de todo el desarrollo nos hemos encontrado con bastantes problemas, a
 Creemos que hemos hecho un muy buen trabajo, en el que hemos aprendido a desarrollar una aplicación completa desde cero. Este proyecto nos ha permitido aplicar conocimientos aprendidos en clase, prácticas y autoaprendizaje, tanto de desarrollo móvil como de integración con servicios en la nube, además de introducirnos en el uso de algoritmos de ML.
 
 ### App Demo
-| Platform | Video |
-|----------|------|
-| iOS     | [Demo iOS](https://github.com/user-attachments/assets/c6110d9a-a5bf-44e7-9afd-e38de9f4ff34) |
-| Android  | [Demo Android](https://github.com/user-attachments/assets/cdc97bb6-300f-4396-a17c-a06e766f63a8) |
-
-## Recursos adicionales
-- [InitialDoc.md](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/InitialDoc.md)
-- [agile.md](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/agile.md)
-- [videos](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/videos/)
-- [backend](https://github.com/ITEC-BCN/projecte-2-dam-24-25-neutral-news/blob/main/functions/)
+[App Demo](https://github.com/user-attachments/assets/cdc97bb6-300f-4396-a17c-a06e766f63a8) |
