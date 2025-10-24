@@ -44,6 +44,7 @@ import com.example.neutralnews_android.di.view.AppFragment
 import com.example.neutralnews_android.ui.main.filter.FilterActivity
 import com.example.neutralnews_android.ui.main.news.NewDetailActivity
 import com.example.neutralnews_android.util.loggerE
+import com.example.neutralnews_android.util.preferences.Prefs
 import com.google.common.reflect.TypeToken
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
@@ -81,6 +82,9 @@ class TodayFragment : AppFragment() {
 
     // Conjunto para almacenar las fechas seleccionadas por el usuario
     private val selectedDates = mutableSetOf<String>()
+
+    // Flag para evitar abrir varios diálogos a la vez
+    private var isDateDialogOpen = false
 
     // Enum to define sort types
     enum class SortType {
@@ -127,175 +131,42 @@ class TodayFragment : AppFragment() {
     }
 
     /**
-     * Muestra el menú desplegable de filtro por fecha con opciones de selección múltiple.
+     * Muestra el diálogo de filtro por fecha (calendario) usando un DialogFragment reutilizable.
      */
+    private val DATE_FILTER_DIALOG_TAG = "date_filter_dialog"
+
     private fun showDateFilterMenu(view: View) {
-        val wrapper = ContextThemeWrapper(context, R.style.AppTheme_PopupOverlay)
-        val popup = PopupMenu(wrapper, view)
-        popup.menuInflater.inflate(R.menu.menu_date_filter, popup.menu)
+        // Prevent opening multiple dialogs
+        if (isDateDialogOpen) return
 
-        // Formatear fecha para mostrar en el menú
-        val dateFormat = SimpleDateFormat("dd/MM", Locale("es", "ES"))
+        val existing = parentFragmentManager.findFragmentByTag(DATE_FILTER_DIALOG_TAG)
+        if (existing != null && (existing.isAdded || existing.isVisible)) return
 
-        val headerItem = popup.menu.findItem(R.id.menu_date_filter_header)
-        if (headerItem != null) {
-            // Configurar el color directamente
-            headerItem.title = SpannableString(headerItem.title).apply {
-                setSpan(ForegroundColorSpan(resources.getColor(R.color.orange, null)),
-                    0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-        }
+        isDateDialogOpen = true
 
-        // Cambiar el comportamiento del menú para soportar selección múltiple
-        try {
-            val fieldMPopup = PopupMenu::class.java.getDeclaredField("mPopup")
-            fieldMPopup.isAccessible = true
-            val mPopup = fieldMPopup.get(popup)
-            mPopup.javaClass.getDeclaredMethod("setForceShowIcon", Boolean::class.java)
-                .invoke(mPopup, true)
-        } catch (e: Exception) {
-            Log.e("TodayFragment", "Error configurando el menú: ${e.message}")
-        }
-
-        // Configurar etiquetas dinámicas para las fechas
-        val todayItem = popup.menu.findItem(R.id.menu_date_today)
-        todayItem.title = SpannableString("${dateFormat.format(pastDays["Hoy"])} - Hoy").apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        todayItem.isCheckable = true
-        todayItem.isChecked = selectedDates.contains("Hoy")
-
-        val yesterdayItem = popup.menu.findItem(R.id.menu_date_yesterday)
-        yesterdayItem.title = SpannableString("${dateFormat.format(pastDays["Ayer"])}").apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        yesterdayItem.isCheckable = true
-        yesterdayItem.isChecked = selectedDates.contains("Ayer")
-
-        // Configurar días de la semana con sus fechas
-        val dayItems = listOf(
-            R.id.menu_date_day1,
-            R.id.menu_date_day2,
-            R.id.menu_date_day3,
-            R.id.menu_date_day4,
-            R.id.menu_date_day5
+        val dlg = DateFilterDialogFragment.newInstance(
+            (filterData.selectedDates ?: emptyList()).map { it.time }.toLongArray()
         )
+        dlg.onApply = { selectedList ->
+            if (selectedList.isEmpty()) {
+                filterData.selectedDates = null
+                currentDateFilter = DateFilterType.ALL
+                selectedDates.clear()
+                Prefs.remove("selected_dates")
+            } else {
+                // persist selection as set of strings (millis)
+                val millisSet = selectedList.map { it.time.toString() }.toSet()
+                Prefs.putStringSet("selected_dates", millisSet)
 
-        // Obtener nombres de días de la semana ordenados (excluyendo Hoy y Ayer)
-        val dayNames = pastDays.keys.filter { it != "Hoy" && it != "Ayer" }.sortedByDescending {
-            pastDays[it]?.time ?: 0
-        }
-
-        // Asignar nombres y fechas a los elementos del menú
-        dayNames.forEachIndexed { index, dayName ->
-            if (index < dayItems.size) {
-                val item = popup.menu.findItem(dayItems[index])
-                item.isVisible = true
-                item.title = SpannableString("${dateFormat.format(pastDays[dayName])}").apply {
-                    setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                }
-                item.isCheckable = true
-                item.isChecked = selectedDates.contains(dayName)
+                filterData.selectedDates = selectedList
+                currentDateFilter = DateFilterType.MULTI_SELECT
+                selectedDates.clear()
+                val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
+                for (d in selectedList) selectedDates.add(fmt.format(d))
             }
+            applyDateFilter()
         }
-
-        // Ocultar elementos no utilizados
-        for (i in dayNames.size until dayItems.size) {
-            popup.menu.findItem(dayItems[i]).isVisible = false
-        }
-
-        // Configurar item "Todas las fechas"
-        val allItem = popup.menu.findItem(R.id.menu_date_all)
-        allItem.title = SpannableString(allItem.title).apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        allItem.isCheckable = true
-        allItem.isChecked = selectedDates.isEmpty()
-
-        // Ocultar opción "Más antiguas" ya que no es compatible con la selección múltiple
-        popup.menu.findItem(R.id.menu_date_older).isVisible = false
-
-        // Agregar botón para aplicar filtros
-        val applyItem = popup.menu.add(0, 9999, 9999, "Aplicar filtros")
-        applyItem.title = SpannableString("APLICAR FILTROS").apply {
-            setSpan(
-                ForegroundColorSpan(resources.getColor(R.color.orange, null)),
-                0,
-                length,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-
-        // Variable para controlar si debemos cerrar el menú
-        var shouldCloseMenu = false
-
-        // Usamos un listener personalizado para controlar exactamente cuándo cerrar el menú
-        popup.setOnMenuItemClickListener { menuItem ->
-            when (menuItem.itemId) {
-                R.id.menu_date_all -> {
-                    // Desmarcar todas las selecciones
-                    selectedDates.clear()
-                    currentDateFilter = DateFilterType.ALL
-                    // NO aplicamos filtros aquí, esperamos al botón Aplicar
-                    allItem.isChecked = true
-
-                    // Desmarcar todos los demás
-                    todayItem.isChecked = false
-                    yesterdayItem.isChecked = false
-                    dayItems.forEach { itemId ->
-                        popup.menu.findItem(itemId)?.isChecked = false
-                    }
-
-                    false // No cerrar el menú
-                }
-
-                R.id.menu_date_today, R.id.menu_date_yesterday,
-                R.id.menu_date_day1, R.id.menu_date_day2,
-                R.id.menu_date_day3, R.id.menu_date_day4, R.id.menu_date_day5 -> {
-                    // Selección múltiple: invertir estado
-                    val dayName = when (menuItem.itemId) {
-                        R.id.menu_date_today -> "Hoy"
-                        R.id.menu_date_yesterday -> "Ayer"
-                        else -> {
-                            val index = dayItems.indexOf(menuItem.itemId)
-                            if (index >= 0 && index < dayNames.size) dayNames[index] else ""
-                        }
-                    }
-
-                    // Invertir selección
-                    if (selectedDates.contains(dayName)) {
-                        selectedDates.remove(dayName)
-                    } else {
-                        selectedDates.add(dayName)
-                    }
-
-                    // Actualizar estado visual manualmente
-                    menuItem.isChecked = !menuItem.isChecked
-
-                    // Si hay selecciones, desmarcar "Todas las fechas"
-                    allItem.isChecked = selectedDates.isEmpty()
-
-                    false // No cerrar el menú
-                }
-
-                9999 -> { // Botón Aplicar
-                    if (selectedDates.isNotEmpty()) {
-                        currentDateFilter = DateFilterType.MULTI_SELECT
-                    } else {
-                        currentDateFilter = DateFilterType.ALL
-                    }
-                    applyDateFilter()
-                    true // Cerrar el menú después de hacer clic en Aplicar
-                }
-
-                else -> false // No cerrar el menú para otras opciones
-            }
-        }
-
-        // Mostrar el menú
-        popup.show()
+        dlg.show(parentFragmentManager, DATE_FILTER_DIALOG_TAG)
     }
 
     /**
@@ -310,21 +181,22 @@ class TodayFragment : AppFragment() {
             }
 
             DateFilterType.MULTI_SELECT -> {
-                if (selectedDates.isEmpty()) {
-                    // Si no hay fechas seleccionadas, mostrar todas
-                    filterData.dateFilter = null
-                    filterData.selectedDates = null
-                } else {
-                    // Configurar múltiples fechas seleccionadas
-                    val selectedDatesList = selectedDates.mapNotNull { pastDays[it] }
-                    filterData.selectedDates = selectedDatesList
+                // If filterData.selectedDates was already set by the dialog, keep it.
+                // Otherwise, if there are selectedDates strings (legacy), try to map them to dates.
+                if (filterData.selectedDates == null || filterData.selectedDates!!.isEmpty()) {
+                    if (selectedDates.isNotEmpty()) {
+                        val selectedDatesList = selectedDates.mapNotNull { pastDays[it] }
+                        filterData.selectedDates = selectedDatesList
+                    } else {
+                        filterData.selectedDates = null
+                    }
                 }
                 filterData.isOlderThan = false
             }
         }
 
         // Actualizar la UI para reflejar las fechas seleccionadas
-        val selectedCount = selectedDates.size
+        val selectedCount = filterData.selectedDates?.size ?: selectedDates.size
         if (selectedCount > 0) {
             binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
         } else {
@@ -345,6 +217,39 @@ class TodayFragment : AppFragment() {
             }
         }
         isLauncherReady = true
+
+        // Listener para recibir el resultado del DateFilterDialogFragment
+        parentFragmentManager.setFragmentResultListener("date_filter_result", this) { _, bundle ->
+            val applied = bundle.getBoolean("applied", false)
+            if (applied) {
+                val arr = bundle.getLongArray("dates") ?: longArrayOf()
+                val dates = arr.map { Date(it) }
+                filterData.selectedDates = dates
+                currentDateFilter = DateFilterType.MULTI_SELECT
+                selectedDates.clear()
+                val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
+                for (d in dates) selectedDates.add(fmt.format(d))
+                applyDateFilter()
+            }
+            // liberar el flag para permitir abrir otro diálogo
+            isDateDialogOpen = false
+        }
+
+        // Restaurar selección persistida (si existe)
+        try {
+            val saved = Prefs.getStringSet("selected_dates", null)
+            if (saved != null && saved.isNotEmpty()) {
+                val arr = saved.mapNotNull { it?.toLongOrNull() }
+                val dates = arr.map { Date(it) }
+                filterData.selectedDates = dates
+                currentDateFilter = DateFilterType.MULTI_SELECT
+                selectedDates.clear()
+                val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
+                for (d in dates) selectedDates.add(fmt.format(d))
+                applyDateFilter()
+            }
+        } catch (ignored: Exception) {
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -446,10 +351,10 @@ class TodayFragment : AppFragment() {
             item.isChecked = false
             item.icon = null
 
-            // Aplicar negrita a todos los elementos del menú
+            // Aplicar color blanco a todos los elementos (excepto el encabezado)
             if (i != 0) { // Saltar el encabezado que ya tiene su propio estilo
                 item.title = SpannableString(item.title).apply {
-                    setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(ForegroundColorSpan(ContextCompat.getColor(requireContext(), R.color.white)), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             }
         }
@@ -470,8 +375,7 @@ class TodayFragment : AppFragment() {
         val selectedItem = popup.menu.findItem(selectedId)
         selectedItem.isChecked = true
         selectedItem.title = SpannableString(selectedItem.title).apply {
-            setSpan(ForegroundColorSpan(ContextCompat.getColor(requireContext(), R.color.dark_gray)),
-                0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(ForegroundColorSpan(ContextCompat.getColor(requireContext(), R.color.white)), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             setSpan(StyleSpan(Typeface.BOLD), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
@@ -1029,13 +933,42 @@ class TodayFragment : AppFragment() {
         val filterCount = result.data?.getIntExtra(FILTER_COUNT, 0)
         binding.filterCount = filterCount
 
-        // Parse the filter data
-        filterData = Gson().fromJson(data, object : TypeToken<LocalFilterBean>() {}.type)
-        filterData.media?.let { loggerE(it.joinToString { "," }) }
+        // Parse the incoming filter data into a temp object
+        val newFilter: LocalFilterBean = Gson().fromJson(data, object : TypeToken<LocalFilterBean>() {}.type)
 
-        // Apply filters client-side without making new API calls
-        isSearchActive = false
-        vm.applyFilters(filterData)
+        // Determine if tag selections changed (FilterActivity already computed this flag for tags)
+        val tagsChanged = result.data?.getBooleanExtra("filters_changed", false) ?: false
+
+        // Determine if selectedDates changed compared to current filterData
+        val oldDates = filterData.selectedDates ?: emptyList<Date>()
+        val newDates = newFilter.selectedDates ?: emptyList<Date>()
+        val dateChanged = if (oldDates.size != newDates.size) true else {
+            // compare by day
+            fun sameDay(a: Date, b: Date): Boolean {
+                val ca = java.util.Calendar.getInstance().apply { time = a }
+                val cb = java.util.Calendar.getInstance().apply { time = b }
+                return ca.get(java.util.Calendar.YEAR) == cb.get(java.util.Calendar.YEAR)
+                        && ca.get(java.util.Calendar.MONTH) == cb.get(java.util.Calendar.MONTH)
+                        && ca.get(java.util.Calendar.DAY_OF_MONTH) == cb.get(java.util.Calendar.DAY_OF_MONTH)
+            }
+            var changed = false
+            for (d in newDates) {
+                if (oldDates.none { od -> sameDay(od, d) }) { changed = true; break }
+            }
+            changed
+        }
+
+        // Update local filterData to the new one
+        filterData = newFilter
+
+        // Apply only if tags or dates changed
+        if (tagsChanged || dateChanged) {
+            isSearchActive = false
+            vm.applyFilters(filterData)
+            vm.applyFiltersAndSearch(force = true)
+        } else {
+            loggerE("No relevante changes in tags or dates - skipping re-apply")
+        }
     }
 
     /**
@@ -1173,9 +1106,3 @@ class TodayFragment : AppFragment() {
         binding.rvTodayNews.smoothScrollToPosition(0)
     }
 }
-
-
-
-
-
-

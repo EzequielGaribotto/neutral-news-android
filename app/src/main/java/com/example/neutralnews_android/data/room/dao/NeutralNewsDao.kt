@@ -12,10 +12,12 @@ interface NeutralNewsDao {
     @Query("SELECT * FROM neutral_news ORDER BY createdAt DESC")
     fun getAllNews(): Flow<List<NeutralNewsEntity>>
 
+    @Query("SELECT * FROM neutral_news WHERE date BETWEEN :from AND :to ORDER BY createdAt DESC")
+    fun getNewsBetween(from: Long, to: Long): List<NeutralNewsEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(news: List<NeutralNewsEntity>)
 
     @Query("DELETE FROM neutral_news")
     suspend fun clearAll()
 }
-

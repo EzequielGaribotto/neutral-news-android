@@ -36,6 +36,7 @@ import com.example.neutralnews_android.data.room.entities.NeutralNewsEntity
 import com.example.neutralnews_android.data.room.entities.NewsEntity
 import com.example.neutralnews_android.di.event.SingleLiveEvent
 import com.example.neutralnews_android.di.viewmodel.BaseViewModel
+import com.example.neutralnews_android.util.Prefs
 import com.example.neutralnews_android.util.string.normalized
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentChange
@@ -59,10 +60,7 @@ import javax.inject.Inject
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-import kotlin.text.format
-// concurrent hash map
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.text.category
 
 /**
  * ViewModel para el fragmento de noticias de hoy.
@@ -105,8 +103,122 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         viewModelScope.launch {
             isLoading.postValue(true)
             loadNews()
+            // compute and cache available days once per day (avoid running on every dialog open)
+            try {
+                val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                val generatedDate = Prefs.getString("available_days_generated_date", null)
+                if (generatedDate == null || generatedDate != todayKey) {
+                    computeAndCacheAvailableDays()
+                    Prefs.putString("available_days_generated_date", todayKey)
+                }
+            } catch (_: Exception) {
+                // ignore
+            }
             applyFiltersAndSearch()
             isLoading.postValue(false)
+        }
+    }
+
+    /**
+     * Precompute available days per month around current month and cache in Prefs.
+     * This runs once at app startup to avoid querying DB when opening the dialog.
+     */
+    private suspend fun computeAndCacheAvailableDays() {
+        withContext(Dispatchers.IO) {
+            try {
+                val db = AppDatabase.getDatabase(getApplication())
+                val newsDaoLocal = db.newsDao()
+                val neutralDaoLocal = db.neutralNewsDao()
+
+                val cal = Calendar.getInstance()
+                val currentYear = cal.get(Calendar.YEAR)
+                val currentMonth = cal.get(Calendar.MONTH) + 1
+
+                // range: previous month .. next 2 months (adjustable)
+                val monthsToCompute = listOf(-1, 0, 1, 2)
+
+                for (offset in monthsToCompute) {
+                    val target = Calendar.getInstance()
+                    target.set(Calendar.YEAR, currentYear)
+                    target.set(Calendar.MONTH, currentMonth - 1)
+                    target.add(Calendar.MONTH, offset)
+                    val y = target.get(Calendar.YEAR)
+                    val m = target.get(Calendar.MONTH) + 1
+
+                    // start / end millis for the month
+                    target.set(Calendar.DAY_OF_MONTH, 1)
+                    target.set(Calendar.HOUR_OF_DAY, 0)
+                    target.set(Calendar.MINUTE, 0)
+                    target.set(Calendar.SECOND, 0)
+                    target.set(Calendar.MILLISECOND, 0)
+                    val from = target.timeInMillis
+
+                    val lastDay = target.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    target.set(Calendar.DAY_OF_MONTH, lastDay)
+                    target.set(Calendar.HOUR_OF_DAY, 23)
+                    target.set(Calendar.MINUTE, 59)
+                    target.set(Calendar.SECOND, 59)
+                    target.set(Calendar.MILLISECOND, 999)
+                    val to = target.timeInMillis
+
+                    val days = mutableSetOf<Int>()
+
+                    try {
+                        val newsInRange = newsDaoLocal.getNewsBetween(from, to)
+                        for (n in newsInRange) {
+                            val ts = if (n.pubDate > 0L) n.pubDate else if (n.createdAt > 0L) n.createdAt else n.updatedAt
+                            if (ts > 0L) {
+                                val c = Calendar.getInstance()
+                                c.timeInMillis = ts
+                                days.add(c.get(Calendar.DAY_OF_MONTH))
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+
+                    try {
+                        val neutralInRange = neutralDaoLocal.getNewsBetween(from, to)
+                        for (ne in neutralInRange) {
+                            // prefer 'date' if present
+                            try {
+                                val cls = ne::class
+                                val dateField = cls.java.getDeclaredField("date")
+                                dateField.isAccessible = true
+                                val dateVal = dateField.getLong(ne)
+                                val millis = if (dateVal in 1..9999999999L) dateVal * 1000L else dateVal
+                                if (millis > 0L) {
+                                    val c = Calendar.getInstance()
+                                    c.timeInMillis = millis
+                                    days.add(c.get(Calendar.DAY_OF_MONTH))
+                                }
+                            } catch (_: Exception) {
+                                try {
+                                    val createdField = ne::class.java.getDeclaredField("createdAt")
+                                    createdField.isAccessible = true
+                                    val createdVal = createdField.getLong(ne)
+                                    val millis = if (createdVal in 1..9999999999L) createdVal * 1000L else createdVal
+                                    if (millis > 0L) {
+                                        val c = Calendar.getInstance()
+                                        c.timeInMillis = millis
+                                        days.add(c.get(Calendar.DAY_OF_MONTH))
+                                    }
+                                } catch (_: Exception) { }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+
+                    // store as CSV in Prefs
+                    val key = "available_days_${y}_${m}"
+                    val csv = days.sorted().joinToString(",")
+                    Prefs.putString(key, csv)
+                }
+
+                // mark generation time for this app session (optional)
+                Prefs.putLong("available_days_generated_at", System.currentTimeMillis())
+            } catch (_: Exception) {
+                // ignore caching errors
+            }
         }
     }
 
@@ -503,7 +615,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         pubDate = getDateForSorting(news.pubDate)?.time ?: Long.MIN_VALUE,
                         updatedAt = getDateForSorting(news.updatedAt)?.time ?: Long.MIN_VALUE,
                         group = news.group,
-                        neutralScore = news.neutralScore?.toFloat(),
+                        neutralScore = news.neutralScore,
                         sourceMediumName = news.sourceMedium?.name?.normalized() ?: ""
                     )
                 }
@@ -661,7 +773,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    private suspend fun foundCachedRegularNewsEntities(): Boolean =
+    private fun foundCachedRegularNewsEntities(): Boolean =
         newsDao.getAllNews().let { entities ->
             if (entities.isNotEmpty()) {
                 Log.d(
@@ -686,7 +798,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                             it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized()
                         }?.pressMedia,
                         group = entity.group,
-                        neutralScore = entity.neutralScore?.toFloat(),
+                        neutralScore = entity.neutralScore,
                     )
                 }
 
@@ -711,15 +823,15 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
                 val cachedNews = entities.map { entity: NeutralNewsEntity ->
                     // Convert stored timestamps to date strings, avoiding Long.MIN_VALUE
-                    val formattedDate = if (entity.date != null && entity.date != Long.MIN_VALUE) {
+                    val formattedDate = if (entity.date != Long.MIN_VALUE) {
                         formatDateToSpanish(entity.date)
                     } else null
 
-                    val formattedCreatedAt = if (entity.createdAt != null && entity.createdAt != Long.MIN_VALUE) {
+                    val formattedCreatedAt = if (entity.createdAt != Long.MIN_VALUE) {
                         formatDateToSpanish(entity.createdAt)
                     } else null
 
-                    val formattedUpdatedAt = if (entity.updatedAt != null && entity.updatedAt != Long.MIN_VALUE) {
+                    val formattedUpdatedAt = if (entity.updatedAt != Long.MIN_VALUE) {
                         formatDateToSpanish(entity.updatedAt)
                     } else null
 
@@ -729,7 +841,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         neutralDescription = entity.neutralDescription,
                         category = entity.category.toString(),
                         imageUrl = entity.imageUrl,
-                        group = entity.group!!.toInt(),
+                        group = entity.group!!,
                         date = formattedDate,
                         createdAt = formattedCreatedAt,
                         updatedAt = formattedUpdatedAt,
@@ -1011,7 +1123,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
         // Configurar las horas de inicio y fin del día
         val calendar = Calendar.getInstance()
-        calendar.time = filterDate
+        if (filterDate != null) {
+            calendar.time = filterDate
+        }
 
         // Si estamos buscando noticias anteriores a una fecha
         if (filterData.isOlderThan) {
@@ -1069,7 +1183,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             calendar.set(Calendar.MILLISECOND, 0)
             val startOfDay = calendar.time
 
-            // Configurar fin del día
+            // Configurar fin del día (23:59:59)
             calendar.set(Calendar.HOUR_OF_DAY, 23)
             calendar.set(Calendar.MINUTE, 59)
             calendar.set(Calendar.SECOND, 59)
@@ -1083,75 +1197,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             }
         }
 
-        return false // No coincide con ningún día seleccionado
-    }
-
-    /**
-     * Aplica el filtro de fecha a las noticias regulares.
-     */
-    private fun applyDateFilter(filterData: LocalFilterBean, newsItem: NewsBean): Boolean {
-        // Si no hay filtro de fecha, mostrar todas las noticias
-        if (filterData.dateFilter == null && filterData.selectedDates.isNullOrEmpty()) {
-            return true
-        }
-
-        val newsDate = getDateForSorting(newsItem.date) ?: return true
-
-        // Filtro múltiple - verificar si la fecha está en cualquiera de las fechas seleccionadas
-        if (filterData.selectedDates != null && filterData.selectedDates!!.isNotEmpty()) {
-            return isDateInAnySelectedDay(newsDate, filterData.selectedDates!!)
-        }
-
-        // Filtro simple (comportamiento anterior)
-        val filterDate = filterData.dateFilter
-
-        // Configurar las horas de inicio y fin del día
-        val calendar = Calendar.getInstance()
-        calendar.time = filterDate
-
-        // Establecer a inicio del día (00:00:00)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        calendar.set(Calendar.MILLISECOND, 0)
-        val startOfDay = calendar.time
-
-        // Si estamos buscando noticias anteriores a una fecha
-        if (filterData.isOlderThan) {
-            return newsDate.before(startOfDay)
-        }
-
-        // Establecer a fin del día (23:59:59)
-        calendar.set(Calendar.HOUR_OF_DAY, 23)
-        calendar.set(Calendar.MINUTE, 59)
-        calendar.set(Calendar.SECOND, 59)
-        calendar.set(Calendar.MILLISECOND, 999)
-        val endOfDay = calendar.time
-
-        // Verificar si la fecha de la noticia está dentro del día seleccionado
-        return newsDate.after(startOfDay) && newsDate.before(endOfDay)
-
-
-    }
-
-    /**
-     * Aplica filtros a los datos de noticias regulares.
-     */
-    private fun applyFiltersToNews(
-        newsItems: List<NewsBean>,
-        filterData: LocalFilterBean
-    ): List<NewsBean> {
-        if (filterData == LocalFilterBean()) {
-            return newsItems
-        }
-
-        return newsItems.asSequence()
-            .filter { newsItem ->
-                applyMediaFilter(filterData, newsItem) &&
-                applyCategoryFilter(filterData, newsItem) &&
-                applyDateFilter(filterData, newsItem)
-            }
-            .toList()
+        return false
     }
 
     /**
@@ -1420,30 +1466,6 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     }
 
     /**
-     * Aplica el filtro de medios a las noticias.
-     *
-     * @return True si el filtro de medios se aplica, false en caso contrario.
-     */
-    private fun applyMediaFilter(filterData: LocalFilterBean, newsItem: NewsBean): Boolean {
-        if (filterData.media.isNullOrEmpty()) return true
-        return filterData.media?.any {
-            it.name?.normalized() == newsItem.sourceMedium?.name?.normalized()
-        } != false
-    }
-
-    /**
-     * Aplica el filtro de categoría a las noticias.
-     *
-     * @return True si el filtro de categoría se aplica, false en caso contrario.
-     */
-    private fun applyCategoryFilter(filterData: LocalFilterBean, newsItem: NewsBean): Boolean {
-        if (filterData.categoryTagBean.isNullOrEmpty()) return true
-        return filterData.categoryTagBean?.any {
-            it.name == newsItem.category
-        } != false
-    }
-
-    /**
      * Aplica el filtro de categoría a las noticias neutrales.
      *
      * @return True si el filtro de categoría se aplica, false en caso contrario.
@@ -1510,7 +1532,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                 if (parsedDate != null) {
                     return parsedDate
                 }
-            } catch (e: ParseException) {
+            } catch (_: ParseException) {
                 // Intentar con el siguiente formato
             }
         }
@@ -1542,13 +1564,15 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
                 if (format == DATE_FORMAT) {
                     val calendar = Calendar.getInstance()
-                    calendar.time = date
+                    if (date != null) {
+                        calendar.time = date
+                    }
                     calendar.set(Calendar.YEAR, currentYear)
                     return calendar.time
                 }
 
                 return date
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Intentar con el siguiente formato
                 continue
             }

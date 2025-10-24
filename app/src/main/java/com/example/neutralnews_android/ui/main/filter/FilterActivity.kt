@@ -46,6 +46,7 @@ class FilterActivity : AppActivity() {
     // Binding
     private lateinit var binding: ActivityFilterBinding
     private val vm: FilterActivityVM by viewModels()
+    private var originalFilterJson: String? = null
 
     @SuppressLint("NotifyDataSetChanged", "SetTextI18n")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,56 +63,79 @@ class FilterActivity : AppActivity() {
             intent.getStringExtra(FILTER_DATA), object : TypeToken<LocalFilterBean>() {}.type
         )
 
+        // keep a copy of original filter state for change detection
+        try {
+            originalFilterJson = Gson().toJson(filterData)
+        } catch (_: Exception) {
+            originalFilterJson = null
+        }
+
         loggerE(filterData.toString())
 
-        // On click
+        // On click handlers for existing buttons
         vm.obrClick.observe(this) { view ->
             when (view.id) {
-                R.id.txtDone -> {
-                    if (binding.tagCategories.getSelectedTags().isNotEmpty()) {
-                        filterData.categories?.clear()
-                        for (tag in binding.tagCategories.getSelectedTags()) {
-                            tag.names?.forEach {
-                                filterData.categories?.add(FilterBean(tag.id, it, "category"))
-                            }
-                        }
-                        filterData.categoryTagBean = binding.tagCategories.getSelectedTags()
-                    } else {
-                        filterData.categoryTagBean = ArrayList()
-                    }
-
-                    if (binding.tagMedia.getSelectedTags().isNotEmpty()) {
-                        filterData.media?.clear()
-                        for (tag in binding.tagMedia.getSelectedTags()) {
-                            filterData.media?.add(FilterBean(tag.id, tag.name, "media"))
-                        }
-                        filterData.mediaTagBean = binding.tagMedia.getSelectedTags()
-                    } else {
-                        filterData.mediaTagBean = ArrayList()
-                    }
-
-                    loggerE(filterData.toString())
-
-                    val intent = Intent()
-                    intent.putExtra(FILTER_DATA, Gson().toJson(filterData))
-                    intent.putExtra(FILTER_COUNT, getFilterCount())
-                    setResult(RESULT_OK, intent)
-                    loggerE("Filter data: ${filterData.startDate} - ${filterData.endDate}")
-                    loggerE("Filter data: ${filterData.media}")
-                    loggerE("Filter data: ${filterData.categories}")
-                    finish()
-                }
-
-                R.id.txtClearAll -> {
+                R.id.btnClearAll -> {
                     clearAllFilter()
                     val intent = Intent()
                     intent.putExtra(FILTER_DATA, Gson().toJson(filterData))
                     intent.putExtra(FILTER_COUNT, getFilterCount())
+                    intent.putExtra("filters_changed", true)
                     setResult(RESULT_OK, intent)
                     finish()
                 }
 
                 R.id.imgBack -> {
+                    // Save current selections and return as result (automatic save on back)
+                    // Detect changes compared to originalFilterJson
+                    val original = try {
+                        if (originalFilterJson != null) Gson().fromJson(originalFilterJson, LocalFilterBean::class.java) else null
+                    } catch (_: Exception) { null }
+
+                    // Capture current selections
+                    val currentMediaTags = binding.tagMedia.getSelectedTags()
+                    val currentCategoryTags = binding.tagCategories.getSelectedTags()
+
+                    // Determine if changed
+                    val origMediaIds = original?.mediaTagBean?.map { it.id }?.toSet() ?: emptySet<Long>()
+                    val currMediaIds = currentMediaTags.map { it.id }.toSet()
+                    val mediaChanged = origMediaIds != currMediaIds
+
+                    val origCatIds = original?.categoryTagBean?.map { it.id }?.toSet() ?: emptySet<Long>()
+                    val currCatIds = currentCategoryTags.map { it.id }.toSet()
+                    val categoriesChanged = origCatIds != currCatIds
+
+                    // Only update filterData.media/category if changed; otherwise preserve original
+                    if (mediaChanged) {
+                        filterData.media?.clear()
+                        for (tag in currentMediaTags) {
+                            filterData.media?.add(FilterBean(tag.id, tag.name, "media"))
+                        }
+                        filterData.mediaTagBean = currentMediaTags
+                    } else {
+                        // keep original (no-op)
+                        filterData.mediaTagBean = original?.mediaTagBean ?: ArrayList()
+                        filterData.media = original?.media ?: ArrayList()
+                    }
+
+                    if (categoriesChanged) {
+                        filterData.categories?.clear()
+                        for (tag in currentCategoryTags) {
+                            tag.names?.forEach {
+                                filterData.categories?.add(FilterBean(tag.id, it, "category"))
+                            }
+                        }
+                        filterData.categoryTagBean = currentCategoryTags
+                    } else {
+                        filterData.categoryTagBean = original?.categoryTagBean ?: ArrayList()
+                        filterData.categories = original?.categories ?: ArrayList()
+                    }
+
+                    val intent = Intent()
+                    intent.putExtra(FILTER_DATA, Gson().toJson(filterData))
+                    intent.putExtra(FILTER_COUNT, getFilterCount())
+                    intent.putExtra("filters_changed", mediaChanged || categoriesChanged)
+                    setResult(RESULT_OK, intent)
                     finish()
                 }
             }
@@ -284,5 +308,55 @@ class FilterActivity : AppActivity() {
 //        filterData.media = ArrayList()
 //        filterData.categories = ArrayList()
 
+    }
+
+    @Deprecated("This method has been deprecated in favor of using the\n      {@link OnBackPressedDispatcher} via {@link #getOnBackPressedDispatcher()}.\n      The OnBackPressedDispatcher controls how back button events are dispatched\n      to one or more {@link OnBackPressedCallback} objects.")
+    override fun onBackPressed() {
+        // Save current selections and return as result (automatic save on back)
+        val original = try {
+            if (originalFilterJson != null) Gson().fromJson(originalFilterJson, LocalFilterBean::class.java) else null
+        } catch (_: Exception) { null }
+
+        val currentMediaTags = binding.tagMedia.getSelectedTags()
+        val currentCategoryTags = binding.tagCategories.getSelectedTags()
+
+        val origMediaIds = original?.mediaTagBean?.map { it.id }?.toSet() ?: emptySet<Long>()
+        val currMediaIds = currentMediaTags.map { it.id }.toSet()
+        val mediaChanged = origMediaIds != currMediaIds
+
+        val origCatIds = original?.categoryTagBean?.map { it.id }?.toSet() ?: emptySet<Long>()
+        val currCatIds = currentCategoryTags.map { it.id }.toSet()
+        val categoriesChanged = origCatIds != currCatIds
+
+        if (mediaChanged) {
+            filterData.media?.clear()
+            for (tag in currentMediaTags) {
+                filterData.media?.add(FilterBean(tag.id, tag.name, "media"))
+            }
+            filterData.mediaTagBean = currentMediaTags
+        } else {
+            filterData.mediaTagBean = original?.mediaTagBean ?: ArrayList()
+            filterData.media = original?.media ?: ArrayList()
+        }
+
+        if (categoriesChanged) {
+            filterData.categories?.clear()
+            for (tag in binding.tagCategories.getSelectedTags()) {
+                tag.names?.forEach {
+                    filterData.categories?.add(FilterBean(tag.id, it, "category"))
+                }
+            }
+            filterData.categoryTagBean = currentCategoryTags
+        } else {
+            filterData.categoryTagBean = original?.categoryTagBean ?: ArrayList()
+            filterData.categories = original?.categories ?: ArrayList()
+        }
+
+        val intent = Intent()
+        intent.putExtra(FILTER_DATA, Gson().toJson(filterData))
+        intent.putExtra(FILTER_COUNT, getFilterCount())
+        intent.putExtra("filters_changed", mediaChanged || categoriesChanged)
+        setResult(RESULT_OK, intent)
+        super.onBackPressed()
     }
 }

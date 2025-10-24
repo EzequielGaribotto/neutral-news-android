@@ -34,7 +34,7 @@
     <string name="delete">Eliminar</string>
     <string name="save">Guardar</string>
     <string name="done">Done</string>
-    <string name="clear_all">Clear</string>
+    <string name="clear_all">Limpiar</string>
     <string name="back">Back</string>
     <string name="txtEllipsis">…</string>
     <string name="minus">-</string>
@@ -80,7 +80,7 @@
     <string name="clear_search">Limpiar búsqueda</string>
 
     <!-- Media Sources -->
-    <string name="media">Media</string>
+    <string name="media">Fuentes</string>
     <string name="abc">ABC</string>
     <string name="el_pais">El País</string>
     <string name="rtve">RTVE</string>
@@ -151,4 +151,8 @@
 
     <string name="n_n">\n\n</string>
     <string name="empty_string"></string>
+    <string name="date">Fecha</string>
+    <string name="prev">Anterior</string>
+    <string name="next">Siguiente</string>
+    <string name="apply">Aplicar</string>
 </resources>

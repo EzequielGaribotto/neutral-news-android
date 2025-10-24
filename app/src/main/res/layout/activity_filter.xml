@@ -62,53 +62,20 @@
                     android:textSize="24sp" />
 
                 <ImageView
-                    android:id="@+id/btnSaveSettings"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:layout_marginTop="24dp"
-                    android:layout_marginEnd="24dp"
-                    android:contentDescription="@string/save"
-                    android:src="@drawable/baseline_save_24"
-                    app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintTop_toTopOf="parent"
+                    android:id="@+id/btnClearAll"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginEnd="16dp"
+                    android:contentDescription="@string/clear_all"
                     android:onClick="@{(v)->vm.onClick(v)}"
-                    android:clickable="true"
-                    android:focusable="true" />
+                    android:padding="8dp"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    app:layout_constraintTop_toTopOf="@id/clHeader"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:tint="@color/black10" />
 
             </androidx.constraintlayout.widget.ConstraintLayout>
-
-            <TextView
-                android:id="@+id/txtClearAll"
-                style="@style/TextView.montserrat_semi_bold"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="15dp"
-                android:background="@drawable/ic_bg_rd_black70_60"
-                android:onClick="@{(v)->vm.onClick(v)}"
-                android:paddingHorizontal="13dp"
-                android:paddingVertical="11dp"
-                android:text="@string/clear_all"
-                android:textColor="@color/black10"
-                android:textSize="14sp"
-                app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/clHeader" />
-
-            <TextView
-                android:id="@+id/txtDone"
-                style="@style/TextView.montserrat_semi_bold"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="24dp"
-                android:background="@drawable/ic_bg_rd_black70_60"
-                android:onClick="@{(v)->vm.onClick(v)}"
-                android:paddingHorizontal="13dp"
-                android:paddingVertical="11dp"
-                android:text="@string/done"
-                android:textColor="@color/black10"
-                android:textSize="14sp"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toTopOf="@+id/txtClearAll" />
 
             <!-- Media options filter -->
             <LinearLayout
@@ -120,7 +87,7 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/txtDone">
+                app:layout_constraintTop_toBottomOf="@id/clHeader">
 
                 <TextView
                     android:id="@+id/txtMediaOptions"
@@ -133,7 +100,7 @@
 
             </LinearLayout>
 
-            <com.example.neutralnews_android.util.tagview.TagView
+            <com.example.neutralnews_android.util.tagview.FilterTagView
                 android:id="@+id/tagMedia"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -172,7 +139,7 @@
                     android:textSize="16sp" />
             </LinearLayout>
 
-            <com.example.neutralnews_android.util.tagview.TagView
+            <com.example.neutralnews_android.util.tagview.FilterTagView
                 android:id="@+id/tagCategories"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -188,6 +155,7 @@
                 android:layout_marginTop="20dp"
                 android:background="@color/gray80"
                 app:layout_constraintTop_toBottomOf="@id/tagCategories" />
+
 
         </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>
