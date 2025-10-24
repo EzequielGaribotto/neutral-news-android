@@ -49,7 +49,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.text.ParseException
 import java.text.SimpleDateFormat
@@ -78,6 +77,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     val isPaginating =
         SingleLiveEvent<Boolean>() // Para mostrar indicador de carga al final de la lista
 
+    // Nuevo: helper de paginación
+    private val paginationHelper = PaginationHelper(pageSize = pageSize, initialDisplayLimit = 15)
+
 
     private val groupsOfNews = mutableMapOf<Int, List<NewsBean>>()
     val messageEvent = SingleLiveEvent<String>()
@@ -92,6 +94,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     val searchQuery = MutableLiveData<String>("")
     val showNoResults = MutableLiveData<Boolean>(false)
 
+    // Ordenación
+    val currentSortType = MutableLiveData<TodaySortType>(TodaySortType.DATE_DESC)
+
     init {
         val database = AppDatabase.getDatabase(application)
         neutralNewsDao = database.neutralNewsDao()
@@ -102,7 +107,44 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     fun setInitialData() {
         viewModelScope.launch {
             isLoading.postValue(true)
-            loadNews()
+            // Calculate initial date range: today and yesterday if morning
+            val calendar = Calendar.getInstance()
+            val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+            val includeYesterday = currentHour < 12
+
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            val todayStart = calendar.timeInMillis
+
+            calendar.set(Calendar.HOUR_OF_DAY, 23)
+            calendar.set(Calendar.MINUTE, 59)
+            calendar.set(Calendar.SECOND, 59)
+            calendar.set(Calendar.MILLISECOND, 999)
+            val todayEnd = calendar.timeInMillis
+
+            val yesterdayStart = if (includeYesterday) {
+                calendar.add(Calendar.DAY_OF_YEAR, -1)
+                calendar.set(Calendar.HOUR_OF_DAY, 0)
+                calendar.set(Calendar.MINUTE, 0)
+                calendar.set(Calendar.SECOND, 0)
+                calendar.set(Calendar.MILLISECOND, 0)
+                calendar.timeInMillis
+            } else null
+
+            val yesterdayEnd = if (includeYesterday) {
+                calendar.set(Calendar.HOUR_OF_DAY, 23)
+                calendar.set(Calendar.MINUTE, 59)
+                calendar.set(Calendar.SECOND, 59)
+                calendar.set(Calendar.MILLISECOND, 999)
+                calendar.timeInMillis
+            } else null
+
+            loadNews(initialDateRanges = listOfNotNull(
+                Pair(todayStart, todayEnd),
+                if (yesterdayStart != null && yesterdayEnd != null) Pair(yesterdayStart, yesterdayEnd) else null
+            ))
             // compute and cache available days once per day (avoid running on every dialog open)
             try {
                 val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
@@ -231,18 +273,18 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
      *
      * @return True si hay datos en caché no vacíos, False en caso contrario.
      */
-    private suspend fun loadNews() {
+    private suspend fun loadNews(initialDateRanges: List<Pair<Long, Long>> = emptyList()) {
         if (isCacheLoading) return
         isCacheLoading = true
 
         withContext(Dispatchers.IO) {
-            Log.d("loadNews", "Iniciando carga desde caché local")
+            Log.d("TodayFragmentVM", "Iniciando carga desde caché local")
             messageEvent.postValue("Verificando caché local...")
 
             try {
                 coroutineScope {
                     val regularNewsDeferred = async<Boolean> {
-                        foundCachedRegularNewsEntities()
+                        foundCachedRegularNewsEntities(initialDateRanges)
                     }
 
                     val neutralNewsDeferred = async<Boolean> {
@@ -254,7 +296,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
                     // Crear los jobs en paralelo sin esperar inmediatamente
                     val regularFirestoreJob = if (!regularLoaded) {
-                        Log.d("loadNews", "Iniciando carga de noticias regulares desde Firestore")
+                        Log.d("TodayFragmentVM", "Iniciando carga de noticias regulares desde Firestore")
                         async {
                             fetchNewsFromFirestoreSuspend(filterData = currentFilterData)
                             true
@@ -262,7 +304,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     } else null
 
                     val neutralFirestoreJob = if (!neutralLoaded) {
-                        Log.d("loadNews", "Iniciando carga de noticias neutrales desde Firestore")
+                        Log.d("TodayFragmentVM", "Iniciando carga de noticias neutrales desde Firestore")
                         async {
                             fetchNeutralNewsFromFirestoreSuspend(filterData = currentFilterData)
                             true
@@ -272,23 +314,23 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     // Esperar a que ambos terminen
                     if (regularFirestoreJob != null) {
                         regularLoaded = regularFirestoreJob.await()
-                        Log.d("loadNews", "Noticias regulares cargadas desde Firestore")
+                        Log.d("TodayFragmentVM", "Noticias regulares cargadas desde Firestore")
                     } else {
-                        Log.d("loadNews", "Noticias regulares cargadas desde caché")
+                        Log.d("TodayFragmentVM", "Noticias regulares cargadas desde caché")
                         refreshRegularNews()
                     }
 
                     if (neutralFirestoreJob != null) {
                         neutralLoaded = neutralFirestoreJob.await()
-                        Log.d("loadNews", "Noticias neutrales cargadas desde Firestore")
+                        Log.d("TodayFragmentVM", "Noticias neutrales cargadas desde Firestore")
                     } else {
-                        Log.d("loadNews", "Noticias neutrales cargadas desde caché")
+                        Log.d("TodayFragmentVM", "Noticias neutrales cargadas desde caché")
                         refreshNeutralNews()
                     }
 
                 }
             } finally {
-                Log.d("loadNews", "Loaded news")
+                Log.d("TodayFragmentVM", "Loaded news")
                 isCacheLoading = false
             }
         }
@@ -296,7 +338,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     }
 
     fun refreshRegularNews() {
-        Log.d("refreshRegularNews", "Iniciando refreshRegularNews() con SnapshotListener")
+        Log.d("TodayFragmentVM", "Iniciando refreshRegularNews() con SnapshotListener")
         newsListenerCompleted = false
         newsSnapshotListener?.remove()
         newsSnapshotListener = null
@@ -304,7 +346,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     }
 
     fun refreshNeutralNews() {
-        Log.d("refreshNeutralNews", "Iniciando refreshNeutralNews() con SnapshotListener")
+        Log.d("TodayFragmentVM", "Iniciando refreshNeutralNews() con SnapshotListener")
         neutralNewsListenerCompleted = false
         neutralNewsSnapshotListener?.remove()
         neutralNewsSnapshotListener = null
@@ -320,7 +362,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
     // Reemplaza refreshNews con esta implementación
     fun refreshNews() {
-        Log.d("refreshNews", "Iniciando refreshNews() con SnapshotListener")
+        Log.d("TodayFragmentVM", "Iniciando refreshNews() con SnapshotListener")
 
         refreshNeutralNews()
         refreshRegularNews()
@@ -356,17 +398,17 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         // Solo ejecutar esto cuando el procesamiento asíncrono esté completo
                         if (result || neutralNewsListenerCompleted) {
                             newsListenerCompleted = true
-                            Log.d("setupNewsListener", "Cambios significativos en noticias")
+                            Log.d("TodayFragmentVM", "Cambios significativos en noticias")
                             checkAllListenersCompleted()
                         } else {
-                            Log.d("setupNewsListener", "No se encontraron cambios significativos en noticias")
+                            Log.d("TodayFragmentVM", "No se encontraron cambios significativos en noticias")
                         }
                     }
                 } else {
-                    Log.d("setupNewsListener", "No hay cambios en las noticias")
+                    Log.d("TodayFragmentVM", "No hay cambios en las noticias")
                 }
             } else {
-                Log.d("setupNewsListener", "No hay cambios en las noticias")
+                Log.d("TodayFragmentVM", "No hay cambios en las noticias")
             }
         }
     }
@@ -398,18 +440,18 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     processSnapshotNeutralNewsDocuments(filteredChanges) { result ->
                         // Solo ejecutar esto cuando el procesamiento asíncrono esté completo
                         if (result || newsListenerCompleted) {
-                            Log.d("setupNeutralNewsListener", "Cambios significativos en noticias neutrales")
+                            Log.d("TodayFragmentVM", "Cambios significativos en noticias neutrales")
                             neutralNewsListenerCompleted = true
                             checkAllListenersCompleted()
                         } else {
-                            Log.d("setupNeutralNewsListener", "No se encontraron cambios significativos en noticias neutrales")
+                            Log.d("TodayFragmentVM", "No se encontraron cambios significativos en noticias neutrales")
                         }
                     }
                 } else {
-                    Log.d("setupNeutralNewsListener", "No hay cambios en las noticias neutrales")
+                    Log.d("TodayFragmentVM", "No hay cambios en las noticias neutrales")
                 }
             } else {
-                Log.d("setupNeutralNewsListener", "No hay cambios en las noticias neutrales")
+                Log.d("TodayFragmentVM", "No hay cambios en las noticias neutrales")
             }
         }
     }
@@ -422,10 +464,10 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         if (newsListenerCompleted && neutralNewsListenerCompleted) {
             newsListenerCompleted = false
             neutralNewsListenerCompleted = false
-            Log.d("checkAllListenersCompleted", "Todos los listeners han completado su carga inicial")
+            Log.d("TodayFragmentVM", "Todos los listeners han completado su carga inicial")
             applyFiltersAndSearch(force = true)
         } else {
-            Log.d("checkAllListenersCompleted", "Esperando a que los listeners completen su carga")
+            Log.d("TodayFragmentVM", "Esperando a que los listeners completen su carga")
         }
     }
 
@@ -436,7 +478,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
      */
     private fun processSnapshotNeutralNewsDocuments(newDocuments: List<DocumentChange>, callback: (Boolean) -> Unit) {
         val changesByType = newDocuments.groupBy { it.type }
-        Log.d("processSnapshotNeutralNewsDocuments", "Cambios detectados (noticias neutrales): ${newDocuments.size}, por tipo: " +
+        Log.d("TodayFragmentVM", "Cambios detectados (noticias neutrales): ${newDocuments.size}, por tipo: " +
                 "ADDED=${changesByType[DocumentChange.Type.ADDED]?.size ?: 0}, " +
                 "MODIFIED=${changesByType[DocumentChange.Type.MODIFIED]?.size ?: 0}, " +
                 "REMOVED=${changesByType[DocumentChange.Type.REMOVED]?.size ?: 0}")
@@ -467,7 +509,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     val updatedNews = newsToAdd.filter { it.id in existingIds }
                     var verifiedUpdatedNews: List<NeutralNewsBean> = emptyList()
                     if (updatedNews.isNotEmpty()) {
-                        Log.d("processNewNeutralNewsDocuments", "Verificando cambios en ${updatedNews.size} noticias neutrales")
+                        Log.d("TodayFragmentVM", "Verificando cambios en ${updatedNews.size} noticias neutrales")
                         verifiedUpdatedNews = updatedNews.filter { news ->
                             val index = allNeutralNews.indexOfFirst { it.id == news.id }
                             if (index >= 0) {
@@ -480,20 +522,20 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         }
 
                         if (verifiedUpdatedNews.isNotEmpty()) {
-                            Log.d("processNewNeutralNewsDocuments", "Actualizando ${verifiedUpdatedNews.size} noticias neutrales con cambios reales")
+                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} noticias neutrales con cambios reales")
                             verifiedUpdatedNews.forEach { news ->
                                 val index = allNeutralNews.indexOfFirst { it.id == news.id }
                                 allNeutralNews[index] = news
-                                Log.d("processNewNeutralNewsDocuments", "Noticia neutral actualizada: ${news.id}, título: ${news.neutralTitle}")
+                                Log.d("TodayFragmentVM", "Noticia neutral actualizada: ${news.id}, título: ${news.neutralTitle}")
                             }
-                            Log.d("processNewNeutralNewsDocuments", "Actualizando ${verifiedUpdatedNews.size} en caché")
+                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} en caché")
                             saveNeutralNewsToLocalCache(verifiedUpdatedNews)
                         }
                     }
 
                     if (brandNewNews.isNotEmpty()) {
                         allNeutralNews.addAll(brandNewNews)
-                        Log.d("processNewNeutralNewsDocuments", "Guardando ${brandNewNews.size} noticias neutrales en caché")
+                        Log.d("TodayFragmentVM", "Guardando ${brandNewNews.size} noticias neutrales en caché")
                         saveNeutralNewsToLocalCache(brandNewNews)
                     }
 
@@ -698,7 +740,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
     private fun processSnapshotNewsDocuments(newDocuments: List<DocumentChange>, callback: (Boolean) -> Unit) {
         val changesByType = newDocuments.groupBy { it.type }
-        Log.d("processSnapshotNewsDocuments", "Cambios detectados (noticias normales): ${newDocuments.size}, por tipo: " +
+        Log.d("TodayFragmentVM", "Cambios detectados (noticias normales): ${newDocuments.size}, por tipo: " +
                 "ADDED=${changesByType[DocumentChange.Type.ADDED]?.size ?: 0}, " +
                 "MODIFIED=${changesByType[DocumentChange.Type.MODIFIED]?.size ?: 0}, " +
                 "REMOVED=${changesByType[DocumentChange.Type.REMOVED]?.size ?: 0}")
@@ -717,7 +759,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     val doc = change.document
                     processNewDocument(doc.data, doc.id)
                 } catch (e: Exception) {
-                    Log.e("processNewNewsDocuments", "Error: ${e.localizedMessage}")
+                    Log.e("TodayFragmentVM", "Error: ${e.localizedMessage}")
                     null
                 }
             }
@@ -731,7 +773,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     var verifiedUpdatedNews: List<NewsBean> = emptyList()
 
                     if (updatedNews.isNotEmpty()) {
-                        Log.d("processNewNewsDocuments", "Verificando cambios en ${updatedNews.size} noticias normales")
+                        Log.d("TodayFragmentVM", "Verificando cambios en ${updatedNews.size} noticias normales")
                         verifiedUpdatedNews = updatedNews.filter { news ->
                             val index = allNews.indexOfFirst { it.id == news.id }
                             if (index >= 0) {
@@ -748,20 +790,20 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         }
 
                         if (verifiedUpdatedNews.isNotEmpty()) {
-                            Log.d("processNewNewsDocuments", "Actualizando ${verifiedUpdatedNews.size} noticias normales con cambios reales")
+                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} noticias normales con cambios reales")
                             verifiedUpdatedNews.forEach { news ->
                                 val index = allNews.indexOfFirst { it.id == news.id }
                                 allNews[index] = news
-                                Log.d("processNewNewsDocuments", "Noticia normal actualizada: ${news.id}, título: ${news.title}")
+                                Log.d("TodayFragmentVM", "Noticia normal actualizada: ${news.id}, título: ${news.title}")
                             }
-                            Log.d("processNewNewsDocuments", "Actualizando ${verifiedUpdatedNews.size} en caché")
+                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} en caché")
                             saveNewsToLocalCache(verifiedUpdatedNews)
                         }
                     }
 
                     if (brandNewNews.isNotEmpty()) {
                         allNews.addAll(brandNewNews)
-                        Log.d("processNewNewsDocuments", "Guardando ${brandNewNews.size} noticias normales en caché")
+                        Log.d("TodayFragmentVM", "Guardando ${brandNewNews.size} noticias normales en caché")
                         saveNewsToLocalCache(brandNewNews)
                     }
 
@@ -773,16 +815,118 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    private fun foundCachedRegularNewsEntities(): Boolean =
-        newsDao.getAllNews().let { entities ->
-            if (entities.isNotEmpty()) {
-                Log.d(
-                    "TodayFragmentVM",
-                    "Cargando ${entities.size} noticias regulares desde caché"
-                )
-                messageEvent.postValue("Cargando ${entities.size} noticias regulares desde caché...")
+    // Pagination / cache progressive loading helpers
+    // ahora delegamos estado de paginación al PaginationHelper
 
-                val cachedNews = entities.map { entity: NewsEntity ->
+    /**
+     * Public: load next page (called from Fragment on scroll)
+     */
+    fun loadNextPage() {
+        if (isLoadingMoreItems) return
+        viewModelScope.launch {
+            isLoadingMoreItems = true
+            isPaginating.postValue(true)
+
+            // Try to load next page from paginationHelper (which yields unique items)
+            val (nextRegular, nextNeutral) = withContext(Dispatchers.Default) {
+                paginationHelper.loadNextPage(allNews, allNeutralNews)
+            }
+
+            if (nextRegular.isNotEmpty()) {
+                allNews.addAll(nextRegular)
+            }
+            if (nextNeutral.isNotEmpty()) {
+                allNeutralNews.addAll(nextNeutral)
+            }
+
+            // If nothing loaded from helper, try a DB fallback (kept minimal)
+            if (nextRegular.isEmpty() && nextNeutral.isEmpty()) {
+                Log.d("TodayFragmentVM", "Cache exhausted, cargando más desde DB condicionalmente")
+                withContext(Dispatchers.IO) {
+                    try {
+                        val db = AppDatabase.getDatabase(getApplication())
+                        if (currentFilterData.selectedDates != null && currentFilterData.selectedDates!!.isNotEmpty()) {
+                            Log.d("TodayFragmentVM", "Cargando noticias desde DB para filtro de fechas (al paginar)")
+                            loadNewsFromDbForDateFilter()
+                        } else {
+                            val entities = db.newsDao().getAllNews()
+                            val remaining = entities.map { entity ->
+                                NewsBean(
+                                    id = entity.id,
+                                    title = entity.title,
+                                    description = entity.description,
+                                    category = entity.category ?: "",
+                                    imageUrl = entity.imageUrl ?: "",
+                                    link = entity.link,
+                                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
+                                    pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
+                                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
+                                    sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
+                                    group = entity.group,
+                                    neutralScore = entity.neutralScore
+                                )
+                            }.sortedByDescending { it.pubDate ?: "" }
+
+                            val start = allNews.size
+                            val end = (start + pageSize).coerceAtMost(remaining.size)
+                            if (start < end) {
+                                val sub = remaining.subList(start, end)
+                                // Use paginationHelper to add these to cached list to keep deduping behavior
+                                paginationHelper.setCachedRegularAll(remaining)
+                                val (moreReg, _) = paginationHelper.loadNextPage(allNews, allNeutralNews)
+                                allNews.addAll(moreReg)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("TodayFragmentVM", "Error al cargar más desde DB: ${e.localizedMessage}")
+                    }
+                }
+            }
+
+            // After loading, reapply filters/search so UI updates
+            withContext(Dispatchers.Default) {
+                applyFiltersAndSearch(force = true)
+            }
+
+            isLoadingMoreItems = false
+            isPaginating.postValue(false)
+        }
+    }
+
+    /**
+     * Load more results from DB when date filter applied. Fetch all matching then paginate locally.
+     */
+    private fun loadNewsFromDbForDateFilter() {
+        try {
+            Log.d("TodayFragmentVM", "Cargando noticias desde DB para filtro de fechas")
+            val db = AppDatabase.getDatabase(getApplication())
+            val newsDaoLocal = db.newsDao()
+            val neutralDaoLocal = db.neutralNewsDao()
+
+            // Build date ranges if selectedDates provided (we'll collect day ranges for each selected date)
+            val selected = currentFilterData.selectedDates ?: emptyList()
+            val regularFromTo = mutableListOf<Pair<Long, Long>>()
+            for (d in selected) {
+                val cal = Calendar.getInstance()
+                cal.time = d
+                cal.set(Calendar.HOUR_OF_DAY, 0)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                val from = cal.timeInMillis
+                cal.set(Calendar.HOUR_OF_DAY, 23)
+                cal.set(Calendar.MINUTE, 59)
+                cal.set(Calendar.SECOND, 59)
+                cal.set(Calendar.MILLISECOND, 999)
+                val to = cal.timeInMillis
+                regularFromTo.add(Pair(from, to))
+            }
+
+            // Query DB for each selected day and aggregate results
+            val newsAccum = mutableListOf<NewsBean>()
+            for ((from, to) in regularFromTo) {
+                val ents = newsDaoLocal.getNewsBetween(from, to)
+                val mapped = ents.map { entity ->
                     NewsBean(
                         id = entity.id,
                         title = entity.title,
@@ -790,51 +934,30 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         category = entity.category ?: "",
                         imageUrl = entity.imageUrl ?: "",
                         link = entity.link,
-                        // Use proper date formatting from timestamp, avoid Long.MIN_VALUE values
                         createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
                         pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
                         updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
-                        sourceMedium = MediaBean.entries.find {
-                            it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized()
-                        }?.pressMedia,
+                        sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
                         group = entity.group,
-                        neutralScore = entity.neutralScore,
+                        neutralScore = entity.neutralScore
                     )
                 }
-
-                allNews = cachedNews.toMutableList()
-                dataLoaded = true
-                messageEvent.postValue("Noticias regulares cargadas desde caché: ${allNews.size}")
-                true
-            } else {
-                messageEvent.postValue("Sin noticias regulares en caché")
-                false
+                newsAccum.addAll(mapped)
             }
-        }
 
-    private suspend fun foundCachedNeutralNewsEntities(): Boolean =
-        neutralNewsDao.getAllNews().firstOrNull()?.let { entities ->
-            if (entities.isNotEmpty()) {
-                Log.d(
-                    "TodayFragmentVM",
-                    "Cargando ${entities.size} noticias neutrales desde caché"
-                )
-                messageEvent.postValue("Cargando ${entities.size} noticias neutrales desde caché...")
+            if (newsAccum.isNotEmpty()) {
+                // If display currently doesn't include these, replace cachedRegularAll
+                paginationHelper.setCachedRegularAll(newsAccum)
+                allNews.clear()
+                val (initialReg, _) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+                if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
+            }
 
-                val cachedNews = entities.map { entity: NeutralNewsEntity ->
-                    // Convert stored timestamps to date strings, avoiding Long.MIN_VALUE
-                    val formattedDate = if (entity.date != Long.MIN_VALUE) {
-                        formatDateToSpanish(entity.date)
-                    } else null
-
-                    val formattedCreatedAt = if (entity.createdAt != Long.MIN_VALUE) {
-                        formatDateToSpanish(entity.createdAt)
-                    } else null
-
-                    val formattedUpdatedAt = if (entity.updatedAt != Long.MIN_VALUE) {
-                        formatDateToSpanish(entity.updatedAt)
-                    } else null
-
+            // Neutral news similar
+            val neutralAccum = mutableListOf<NeutralNewsBean>()
+            for ((from, to) in regularFromTo) {
+                val entsN = neutralDaoLocal.getNewsBetween(from, to)
+                val mappedN = entsN.map { entity ->
                     NeutralNewsBean(
                         id = entity.id,
                         neutralTitle = entity.neutralTitle,
@@ -842,33 +965,147 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         category = entity.category.toString(),
                         imageUrl = entity.imageUrl,
                         group = entity.group!!,
-                        date = formattedDate,
-                        createdAt = formattedCreatedAt,
-                        updatedAt = formattedUpdatedAt,
+                        date = if (entity.date != Long.MIN_VALUE) formatDateToSpanish(entity.date) else null,
+                        createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
+                        updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
                         sourceIds = entity.sourceIds,
                         relevance = entity.relevance
                     )
                 }
-
-                allNeutralNews = cachedNews.toMutableList()
-                dataLoaded = true
-                Log.d(
-                    "TodayFragmentVM",
-                    "Noticias neutrales cargadas desde caché: ${allNeutralNews.size}"
-                )
-                Log.d(
-                    "TodayFragmentVM",
-                    "Sample neutral news from cache: ${allNeutralNews.firstOrNull()?.let { 
-                        "id=${it.id}, date=${it.date}, createdAt=${it.createdAt}, updatedAt=${it.updatedAt}" 
-                    }}"
-                )
-                true
-            } else {
-                Log.d("TodayFragmentVM", "Sin noticias neutrales en caché")
-                messageEvent.postValue("Sin noticias neutrales en caché")
-                false
+                neutralAccum.addAll(mappedN)
             }
-        } == true
+
+            val sortedNeutral = neutralAccum.sortedByDescending { it.date ?: "" }
+            if (sortedNeutral.isNotEmpty()) {
+                paginationHelper.setCachedNeutralAll(sortedNeutral)
+                // prepare initial display using helper - it will ensure no duplicates
+                val (initialReg2, initialNeu2) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+                if (initialNeu2.isNotEmpty()) allNeutralNews.addAll(initialNeu2)
+            }
+
+        } catch (e: Exception) {
+            Log.e("TodayFragmentVM", "Error loading from DB for date filter: ${e.localizedMessage}")
+        }
+    }
+
+    // Modify cache-found helpers to prepare cachedAll and initial display
+     private fun foundCachedRegularNewsEntities(initialDateRanges: List<Pair<Long, Long>> = emptyList()): Boolean {
+         val entities = newsDao.getAllNews()
+         if (entities.isNotEmpty()) {
+            // Filter by initialDateRanges if provided
+            val filteredEntities = if (initialDateRanges.isNotEmpty()) {
+                entities.filter { entity ->
+                    val ts = entity.pubDate.takeIf { it != Long.MIN_VALUE } ?: entity.createdAt
+                    if (ts <= 0L) return@filter false
+                    initialDateRanges.any { (start, end) -> ts in start..end }
+                }
+            } else {
+                entities
+            }
+
+            if (filteredEntities.isEmpty()) {
+                messageEvent.postValue("Sin noticias regulares en caché para las fechas iniciales")
+                return false
+            }
+
+            // Map and sort by pubDate desc
+            val mappedAll = filteredEntities.map { entity ->
+                NewsBean(
+                    id = entity.id,
+                    title = entity.title,
+                    description = entity.description,
+                    category = entity.category ?: "",
+                    imageUrl = entity.imageUrl ?: "",
+                    link = entity.link,
+                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
+                    pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
+                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
+                    sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
+                    group = entity.group,
+                    neutralScore = entity.neutralScore
+                )
+            }.sortedByDescending { it.pubDate ?: "" }
+
+            // set into pagination helper and prepare initial display
+            paginationHelper.setCachedRegularAll(mappedAll)
+            paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
+            allNews = mutableListOf()
+            val (initialReg, _) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+            if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
+
+            dataLoaded = true
+            messageEvent.postValue("Noticias regulares cargadas desde caché: ${allNews.size}")
+            return true
+        } else {
+            messageEvent.postValue("Sin noticias regulares en caché")
+            return false
+        }
+     }
+
+     private suspend fun foundCachedNeutralNewsEntities(): Boolean {
+         val entities = neutralNewsDao.getAllNews().firstOrNull() ?: emptyList()
+         return if (entities.isNotEmpty()) {
+            // Map and sort by date desc
+            val mappedAll = entities.map { entity ->
+                NeutralNewsBean(
+                    id = entity.id,
+                    neutralTitle = entity.neutralTitle,
+                    neutralDescription = entity.neutralDescription,
+                    category = entity.category.toString(),
+                    imageUrl = entity.imageUrl,
+                    group = entity.group!!,
+                    date = if (entity.date != Long.MIN_VALUE) formatDateToSpanish(entity.date) else null,
+                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
+                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
+                    sourceIds = entity.sourceIds,
+                    relevance = entity.relevance
+                )
+            }.sortedByDescending { it.date ?: "" }
+
+            // For initial display, filter today's items
+            val todayCal = Calendar.getInstance()
+            val y = todayCal.get(Calendar.YEAR)
+            val m = todayCal.get(Calendar.MONTH)
+            val d = todayCal.get(Calendar.DAY_OF_MONTH)
+
+            val todaysMapped = mappedAll.filter { nb ->
+                // try to map back to entity date long
+                val ent = entities.find { it.id == nb.id }
+                val ts = ent?.date ?: ent?.createdAt ?: 0L
+                if (ts <= 0L) return@filter false
+                val cal = Calendar.getInstance(); cal.timeInMillis = ts
+                cal.get(Calendar.YEAR) == y && cal.get(Calendar.MONTH) == m && cal.get(Calendar.DAY_OF_MONTH) == d
+            }
+
+            paginationHelper.setCachedNeutralAll(mappedAll)
+            allNeutralNews = mutableListOf()
+            val (_, initialNeu) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+            if (initialNeu.isNotEmpty()) allNeutralNews.addAll(initialNeu)
+
+            dataLoaded = true
+            messageEvent.postValue("Noticias neutrales cargadas desde caché: ${allNeutralNews.size}")
+            true
+        } else {
+            messageEvent.postValue("Sin noticias neutrales en caché")
+            false
+        }
+     }
+
+    /**
+     * Public: Trigger DB load for currently selected dates (called when user applies date filter).
+     */
+    fun loadForSelectedDates() {
+        viewModelScope.launch {
+            isPaginating.postValue(true)
+            withContext(Dispatchers.IO) {
+                loadNewsFromDbForDateFilter()
+            }
+            withContext(Dispatchers.Default) {
+                applyFiltersAndSearch(force = true)
+            }
+            isPaginating.postValue(false)
+        }
+    }
 
     /**
      * Filtra noticias por consulta de búsqueda.
@@ -1006,13 +1243,13 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             // Búsqueda por ID de grupo - formato: "g<número>"
             val groupId = query.substring(1).toIntOrNull()
             if (groupId != null) {
-                Log.d("searchInNeutralNews", "Búsqueda por grupo específico: $groupId")
+                Log.d("TodayFragmentVM", "Búsqueda por grupo específico: $groupId")
                 return news.filter { it.group == groupId }.toMutableList()
             }
         } else if (query.startsWith("s", ignoreCase = true) && query.length > 1) {
             // Búsqueda por ID de fuente - formato: "s<id>"
             val sourceId = query.substring(1)
-            Log.d("searchInNeutralNews", "Búsqueda por fuente específica: $sourceId")
+            Log.d("TodayFragmentVM", "Búsqueda por fuente específica: $sourceId")
             return news.filter { newsItem ->
                 newsItem.sourceIds?.any { it.contains(sourceId, ignoreCase = true) } == true
             }.toMutableList()
@@ -1104,7 +1341,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         val newsDate = getDateForSorting(newsItem.date)
         if (newsDate == null) {
             // Si no podemos obtener la fecha, incluimos la noticia por defecto
-            Log.d("DateFilter", "No se pudo obtener fecha para noticia: ${newsItem.neutralTitle}")
+            Log.d("TodayFragmentVM", "No se pudo obtener fecha para noticia: ${newsItem.neutralTitle}")
             return true
         }
 
@@ -1117,9 +1354,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         val filterDate = filterData.dateFilter
 
         // Log para depuración
-        Log.d("DateFilter", "Comparando fechas - Noticia: ${SimpleDateFormat("dd 'DE' MMMM, HH:mm", Locale.getDefault()).format(newsDate)}")
-        Log.d("DateFilter", "Filtro: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(filterDate)}")
-        Log.d("DateFilter", "Es anterior a: ${filterData.isOlderThan}")
+        Log.d("TodayFragmentVM", "Comparando fechas - Noticia: ${SimpleDateFormat("dd 'DE' MMMM, HH:mm", Locale.getDefault()).format(newsDate)}")
+        Log.d("TodayFragmentVM", "Filtro: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(filterDate)}")
+        Log.d("TodayFragmentVM", "Es anterior a: ${filterData.isOlderThan}")
 
         // Configurar las horas de inicio y fin del día
         val calendar = Calendar.getInstance()
@@ -1136,9 +1373,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             calendar.set(Calendar.MILLISECOND, 0)
             val startOfDay = calendar.time
 
-            Log.d("DateFilter", "Comparando antes de: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
+            Log.d("TodayFragmentVM", "Comparando antes de: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
             val result = newsDate.before(startOfDay)
-            Log.d("DateFilter", "Resultado: $result")
+            Log.d("TodayFragmentVM", "Resultado: $result")
             return result
         } else {
             // Establecer a inicio del día (00:00:00)
@@ -1155,14 +1392,14 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             calendar.set(Calendar.MILLISECOND, 999)
             val endOfDay = calendar.time
 
-            Log.d("DateFilter", "Rango del día - Inicio: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
-            Log.d("DateFilter", "Rango del día - Fin: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(endOfDay)}")
+            Log.d("TodayFragmentVM", "Rango del día - Inicio: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
+            Log.d("TodayFragmentVM", "Rango del día - Fin: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(endOfDay)}")
 
             // Verificar si la fecha de la noticia está dentro del día seleccionado
             val isWithinRange = (newsDate.after(startOfDay) || newsDate.equals(startOfDay)) &&
                     (newsDate.before(endOfDay) || newsDate.equals(endOfDay))
 
-            Log.d("DateFilter", "¿Dentro del rango?: $isWithinRange")
+            Log.d("TodayFragmentVM", "¿Dentro del rango?: $isWithinRange")
             return isWithinRange
         }
     }
@@ -1256,7 +1493,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         continuation: Continuation<Boolean>? = null
     ) {
         if (allNeutralNews.isNotEmpty()) {
-            Log.d("fetchNeutralNewsFromFirestore", "Ya hay noticias neutrales cargadas, usando caché")
+            Log.d("TodayFragmentVM", "Ya hay noticias neutrales cargadas, usando caché")
             messageEvent.postValue("Usando noticias neutrales en caché")
         }
 
@@ -1294,39 +1531,47 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     }
                 }
 
-                allNeutralNews = fetchedNeutralNews.toMutableList()
+                // Guardar la lista completa en el helper y preparar la vista inicial (subconjunto)
+                val sortedAll = fetchedNeutralNews.sortedByDescending { it.date ?: "" }
+                paginationHelper.setCachedNeutralAll(sortedAll)
+                paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
+
+                // Inicializar listas mostradas usando helper (evita duplicados)
+                allNeutralNews = mutableListOf()
+                val (initialReg, initialNeu) = paginationHelper.prepareInitialDisplay(mutableListOf(), allNeutralNews)
+                if (initialNeu.isNotEmpty()) allNeutralNews.addAll(initialNeu)
 
                 dataLoaded = true
 
                 Log.d(
                     "fetchNeutralNewsFromFirestore",
-                    "Cantidad de noticias neutrales: ${allNeutralNews.size}"
+                    "Cantidad de noticias neutrales (total en helper): ${sortedAll.size}, mostradas: ${allNeutralNews.size}"
                 )
-                messageEvent.postValue("Noticias neutrales obtenidas con éxito. Total: ${allNeutralNews.size}")
+                messageEvent.postValue("Noticias neutrales obtenidas con éxito. Total: ${sortedAll.size}")
 
                 // Guardar en caché local con el timestamp original
                 saveNeutralNewsToLocalCache(fetchedNeutralNews)
-            } else {
-                messageEvent.postValue("No se encontraron noticias neutrales en Firestore")
-                Log.w(
-                    "fetchNeutralNewsFromFirestore",
-                    "No se encontraron noticias neutrales en Firestore"
-                )
-                // Solo mostrar "No hay resultados" si no hay consulta de búsqueda (mostrando estado vacío)
-                Log.d("fetchNeutralNewsFromFirestore", "Mostrando mensaje 'No hay resultados': ${searchQuery.value.isNullOrEmpty()}")
-                showNoResults.postValue(searchQuery.value.isNullOrEmpty())
-            }
-        }.addOnSuccessListener {
-            continuation?.resume(true)
-        }.addOnFailureListener { e ->
-            continuation?.resume(false)
-            messageEvent.postValue("Error al obtener noticias neutrales: ${e.localizedMessage}")
-            Log.e(
-                "fetchNeutralNewsFromFirestore",
-                "Error al obtener noticias neutrales: ${e.localizedMessage}"
-            )
-        }
-    }
+             } else {
+                 messageEvent.postValue("No se encontraron noticias neutrales en Firestore")
+                 Log.w(
+                     "fetchNeutralNewsFromFirestore",
+                     "No se encontraron noticias neutrales en Firestore"
+                 )
+                 // Solo mostrar "No hay resultados" si no hay consulta de búsqueda (mostrando estado vacío)
+                 Log.d("TodayFragmentVM", "Mostrando mensaje 'No hay resultados': ${searchQuery.value.isNullOrEmpty()}")
+                 showNoResults.postValue(searchQuery.value.isNullOrEmpty())
+             }
+         }.addOnSuccessListener {
+             continuation?.resume(true)
+         }.addOnFailureListener { e ->
+             continuation?.resume(false)
+             messageEvent.postValue("Error al obtener noticias neutrales: ${e.localizedMessage}")
+             Log.e(
+                 "fetchNeutralNewsFromFirestore",
+                 "Error al obtener noticias neutrales: ${e.localizedMessage}"
+             )
+         }
+     }
 
     /**
      * Obtiene datos de noticias desde Firestore.
@@ -1350,13 +1595,14 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         continuation: Continuation<Boolean>? = null
     ) {
         val startTime = System.currentTimeMillis()
-        Log.d("TIMER", "Iniciando consulta a Firestore")
+        Log.d("TodayFragmentVM", "Iniciando consulta a Firestore")
 
         if (allNews.isNotEmpty()) {
-            Log.d("fetchNewsFromFirestore", "Ya hay noticias cargadas, usando caché")
+            Log.d("TodayFragmentVM", "Ya hay noticias cargadas, usando caché")
             messageEvent.postValue("Usando noticias en caché")
             return
         }
+
 
         isFirestoreLoading = true
 
@@ -1372,15 +1618,15 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             .addOnSuccessListener { snapshot ->
                 val endTime = System.currentTimeMillis()
                 val elapsedTime = endTime - startTime
-                Log.d("TIMER", "Consulta completada en $elapsedTime ms")
+                Log.d("TodayFragmentVM", "Consulta completada en $elapsedTime ms")
 
                 if (snapshot != null && !snapshot.isEmpty) {
-                    Log.d("fetchNewsFromFirestore", "Snapshot size: ${snapshot.size()}")
+                    Log.d("TodayFragmentVM", "Snapshot size: ${snapshot.size()}")
                     val fetchedNews = snapshot.documents.mapNotNull { doc ->
                         val data = doc.data
                         try {
                             if (data == null) {
-                                Log.e("fetchNewsFromFirestore", "Data is null for document: ${doc.id}")
+                                Log.e("TodayFragmentVM", "Data is null for document: ${doc.id}")
                                 return@mapNotNull null
                             }
                             val result = processNewDocument(data, doc.id)
@@ -1390,38 +1636,45 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                             result
                         } catch (e: Exception) {
                             e.printStackTrace()
-                            Log.e("fetchNewsFromFirestore", "Error parsing document: ${e.localizedMessage}")
+                            Log.e("TodayFragmentVM", "Error parsing document: ${e.localizedMessage}")
                             null
                         }
                     }
 
-                    // Almacenar todas las noticias sin filtrar
-                    allNews = fetchedNews.toMutableList()
+                    // Guardar la lista completa en el helper y preparar la vista inicial (subconjunto)
+                    val sortedAll = fetchedNews.sortedByDescending { it.pubDate ?: "" }
+                    paginationHelper.setCachedRegularAll(sortedAll)
+                    paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
 
-                    Log.d("fetchNewsFromFirestore", "Fetched news count: ${fetchedNews.size}")
-                    messageEvent.postValue("News fetched successfully. Total: ${fetchedNews.size}")
+                    // Inicializar listas mostradas usando helper (evita duplicados)
+                    allNews = mutableListOf()
+                    val (initialReg, initialNeu) = paginationHelper.prepareInitialDisplay(allNews, mutableListOf())
+                    if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
+
+                    Log.d("TodayFragmentVM", "Fetched news count (helper): ${sortedAll.size}, mostradas: ${allNews.size}")
+                    messageEvent.postValue("News fetched successfully. Total: ${sortedAll.size}")
                     // Guardar en caché local
                     saveNewsToLocalCache(fetchedNews)
-                } else {
-                    messageEvent.postValue("No news found in Firestore")
-                    Log.w("fetchNewsFromFirestore", "No news found in Firestore")
-                }
-                isFirestoreLoading = false
-            }
-            .addOnSuccessListener {
-                continuation?.resume(true)
-            }
-            .addOnFailureListener { e ->
-                val endTime = System.currentTimeMillis()
-                val elapsedTime = endTime - startTime
-                Log.e("TIMER", "Consulta falló después de $elapsedTime ms: ${e.localizedMessage}")
+                 } else {
+                     messageEvent.postValue("No news found in Firestore")
+                     Log.w("TodayFragmentVM", "No news found in Firestore")
+                 }
+                 isFirestoreLoading = false
+             }
+             .addOnSuccessListener {
+                 continuation?.resume(true)
+             }
+             .addOnFailureListener { e ->
+                 val endTime = System.currentTimeMillis()
+                 val elapsedTime = endTime - startTime
+                 Log.e("TIMER", "Consulta falló después de $elapsedTime ms: ${e.localizedMessage}")
 
-                continuation?.resume(false)
-                messageEvent.postValue("Error fetching news: ${e.localizedMessage}")
-                Log.e("fetchNewsFromFirestore", "Error fetching news: ${e.localizedMessage}")
-                isFirestoreLoading = false
-            }
-    }
+                 continuation?.resume(false)
+                 messageEvent.postValue("Error fetching news: ${e.localizedMessage}")
+                 Log.e("TodayFragmentVM", "Error fetching news: ${e.localizedMessage}")
+                 isFirestoreLoading = false
+             }
+     }
     /**
      * Agrupa los elementos de noticias obtenidos según su número de grupo y medio de origen.
      *
@@ -1581,303 +1834,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         return null
     }
 
-
-    /**
-     * Carga la primera página de noticias neutrales desde Firestore.
-     */
-    fun loadFirstPageNeutralNews() {
-        if (isLoadingFirstPage) {
-            Log.d("Paginación", "Ya hay una carga inicial en progreso, ignorando solicitud")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                isLoadingFirstPage = true
-                lastLoadedTimestamp = null
-                hasMoreItems = true
-                allNeutralNews.clear()
-
-                loadNeutralNewsPage()
-            } catch (e: Exception) {
-                Log.e("Paginación", "Error cargando la primera página: ${e.message}", e)
-                messageEvent.postValue("Error al cargar noticias: ${e.message}")
-            } finally {
-                isLoadingFirstPage = false
-            }
-        }
+    fun updateSortType(sortType: TodaySortType) {
+        currentSortType.value = sortType
+        paginationHelper.sortCachedLists(sortType)
+        applyFiltersAndSearch(force = true)
     }
-
-    /**
-     * Carga la siguiente página de noticias neutrales.
-     */
-    fun loadNextPage() {
-        if (isLoadingMoreItems || !hasMoreItems) {
-            Log.d("Paginación", "Solicitud omitida: carga=${isLoadingMoreItems}, hasMore=${hasMoreItems}")
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                Log.d("Paginación", "Iniciando carga de siguiente página")
-                isLoadingMoreItems = true
-                isPaginating.postValue(true)
-
-                loadNeutralNewsPage()
-            } catch (e: Exception) {
-                Log.e("Paginación", "Error: ${e.message}", e)
-            } finally {
-                isLoadingMoreItems = false
-                isPaginating.postValue(false)
-            }
-        }
-    }
-
-    private suspend fun loadNeutralNewsPage() {
-        val db = FirebaseFirestore.getInstance()
-
-        Log.d("Paginación", "Iniciando carga de página. Último timestamp: $lastLoadedTimestamp")
-
-        var queryRef = db.collection(NEUTRAL_NEWS)
-            .orderBy(CREATED_AT, Query.Direction.DESCENDING)
-            .limit(pageSize.toLong())
-
-        // Si no es la primera página, añadir startAfter
-        if (lastLoadedTimestamp != null) {
-            queryRef = queryRef.startAfter(lastLoadedTimestamp)
-            Log.d("Paginación", "Consultando después de timestamp: $lastLoadedTimestamp")
-        }
-
-        try {
-            Log.d("Paginación", "Ejecutando consulta a Firestore...")
-            val startTime = System.currentTimeMillis()
-            val snapshot = queryRef.get().await()
-            val queryTime = System.currentTimeMillis() - startTime
-            Log.d("Paginación", "Consulta completada en $queryTime ms. Documentos: ${snapshot.size()}")
-
-            if (snapshot.isEmpty) {
-                Log.d("Paginación", "No hay más resultados disponibles")
-                hasMoreItems = false
-                return
-            }
-
-            // Importante: Solo verificar IDs en lugar de objetos completos
-            val existingIds = allNeutralNews.map { it.id }.toSet()
-            Log.d("Paginación", "IDs existentes: ${existingIds.size}")
-
-            val fetchedNeutralNews = snapshot.documents.mapNotNull { document ->
-                try {
-                    // Solo procesar documentos que no existen ya
-                    if (document.id !in existingIds) {
-                        val docData = document.data ?: return@mapNotNull null
-                        processNeutralNewDocument(docData, document.id)
-                    } else {
-                        Log.d("Paginación", "Documento ya existe: ${document.id}")
-                        null
-                    }
-                } catch (e: Exception) {
-                    Log.e("Paginación", "Error procesando documento: ${e.message}")
-                    null
-                }
-            }
-
-            Log.d("Paginación", "Noticias neutrales procesadas: ${fetchedNeutralNews.size}")
-
-            if (fetchedNeutralNews.isNotEmpty()) {
-                // Guardar el último timestamp para la próxima paginación
-                val lastNews = fetchedNeutralNews.lastOrNull()
-                if (lastNews?.date != null) {
-                    lastLoadedTimestamp = Timestamp(
-                        lastNews.date.toLong(),
-                        0
-                    ) // Guardar el timestamp del último elemento
-                    Log.d("Paginación", "Nuevo timestamp para próxima página: $lastLoadedTimestamp")
-                }
-
-                // Añadir a la lista existente
-                allNeutralNews.addAll(fetchedNeutralNews)
-                Log.d("Paginación", "Nuevo tamaño de allNeutralNews: ${allNeutralNews.size}")
-
-                // Guardar en caché local
-                saveNeutralNewsToLocalCache(fetchedNeutralNews)
-
-                // Cargar las noticias normales relacionadas
-                loadRelatedRegularNews(fetchedNeutralNews)
-
-                // IMPORTANTE: Solo establecer hasMoreItems=false si no se recibieron resultados
-                // o si recibimos menos del tamaño de página
-                hasMoreItems = fetchedNeutralNews.size >= pageSize
-                Log.d("Paginación", "¿Hay más elementos para cargar? $hasMoreItems")
-
-                // Aplicar filtros y actualizar la UI
-                applyFiltersAndSearch()
-            } else {
-                hasMoreItems = false
-                Log.d("Paginación", "No se encontraron noticias nuevas (posible duplicación)")
-            }
-        } catch (e: Exception) {
-            Log.e("Paginación", "Error cargando página: ${e.message}", e)
-            messageEvent.postValue("Error al cargar más noticias: ${e.message}")
-        }
-    }
-
-    /**
-     * Carga solo las noticias normales relacionadas con las noticias neutrales dadas.
-     */
-    private suspend fun loadRelatedRegularNews(neutralNews: List<NeutralNewsBean>) {
-        if (neutralNews.isEmpty()) return
-
-        Log.d("Paginación", "Cargando noticias relacionadas para ${neutralNews.size} grupos")
-        val groups = neutralNews.map { it.group }.distinct()
-        Log.d("Paginación", "Consultando grupos: $groups")
-
-        try {
-            val db = FirebaseFirestore.getInstance()
-            val query = db.collection("news").whereIn(GROUP, groups)
-                .limit(100) // Limitamos para evitar exceder cuotas
-
-            val snapshot = query.get().await()
-            Log.d("Paginación", "Documentos encontrados para grupos: ${snapshot.documents.size}")
-
-            val relatedNews = mutableListOf<NewsBean>()
-            snapshot.documents.forEach { doc ->
-                processNewDocument(doc.data as Map<String, Any>, doc.id)?.let {
-                    relatedNews.add(it)
-                }
-            }
-
-            Log.d("Paginación", "Noticias regulares procesadas: ${relatedNews.size}")
-
-            // Actualizamos la colección de noticias regulares
-            allNews.addAll(relatedNews)
-            updateGroupsOfNews(relatedNews)
-            Log.d("Paginación", "Carga de noticias relacionadas completada en ${System.currentTimeMillis() % 1000} ms")
-        } catch (e: Exception) {
-            Log.e("Paginación", "Error cargando noticias relacionadas: ${e.message}", e)
-        }
-    }
-
-    private suspend fun loadNewsForGroups(groups: List<Int>) {
-        val db = FirebaseFirestore.getInstance()
-        Log.d("Paginación", "Consultando grupos: $groups")
-
-        try {
-            val existingIds = allNews.map { it.id }.toSet()
-            val query = db.collection(NEWS).whereIn(GROUP, groups)
-
-            val snapshot = query.get().await()
-            Log.d("Paginación", "Documentos encontrados para grupos: ${snapshot.size()}")
-
-            val fetchedNews = snapshot.documents.mapNotNull { document ->
-                try {
-                    val docData = document.data
-                    if (docData != null && document.id !in existingIds) {
-                        processNewDocument(docData, document.id)
-                    } else {
-                        null
-                    }
-                } catch (e: Exception) {
-                    Log.e("Paginación", "Error procesando documento: ${e.message}")
-                    null
-                }
-            }
-
-            Log.d("Paginación", "Noticias regulares procesadas: ${fetchedNews.size}")
-            if (fetchedNews.isNotEmpty()) {
-                // Añadir noticias nuevas
-                allNews.addAll(fetchedNews)
-
-                // Actualizar groupsOfNews
-                updateGroupsOfNews(allNews)
-
-                // Guardar en caché local
-                saveNewsToLocalCache(fetchedNews)
-            }
-        } catch (e: Exception) {
-            Log.e("Paginación", "Error cargando grupos: ${e.message}")
-        }
-    }
-
-    fun searchNewsInFirebase(query: String) {
-        if (query.length < 2) {
-            if (query.isEmpty()) {
-                loadFirstPageNeutralNews()
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            try {
-                searchQuery.value = query
-                Log.d("searchNewsInFirebase", "No results: false")
-                showNoResults.postValue(false)
-
-                Log.d("Búsqueda", "Iniciando búsqueda en Firebase: '$query'")
-                val lowerQuery = query.trim().normalized()
-                val db = FirebaseFirestore.getInstance()
-
-                // Recuperar un conjunto mayor de documentos recientes
-                val recentNewsSnapshot = db.collection(NEUTRAL_NEWS)
-                    .orderBy(CREATED_AT, com.google.firebase.firestore.Query.Direction.DESCENDING)
-                    .get()
-                    .await()
-
-                Log.d("Búsqueda", "Documentos recuperados para búsqueda: ${recentNewsSnapshot.size()}")
-
-                // Realizar búsqueda en memoria con contains()
-                val results = recentNewsSnapshot.documents.mapNotNull { doc ->
-                    processNeutralNewDocument(doc.data, doc.id)?.let { news ->
-                        // Verificamos si el título o descripción CONTIENEN la consulta
-                        val titleMatch = news.neutralTitle.normalized().contains(lowerQuery, ignoreCase = true)
-                        val descMatch = news.neutralDescription.normalized().contains(lowerQuery, ignoreCase = true)
-
-                        // Log detallado para diagnóstico
-                        if (titleMatch) {
-                            Log.d("Búsqueda", "Coincidencia en título: '${news.neutralTitle}'")
-                        }
-                        if (descMatch) {
-                            Log.d("Búsqueda", "Coincidencia en descripción: título='${news.neutralTitle}', desc contiene='$lowerQuery'")
-                        }
-
-                        if (titleMatch || descMatch) news else null
-                    }
-                }
-
-                // Ordenamos por relevancia (primero títulos, luego descripciones)
-                val sortedResults = results.sortedWith(compareBy(
-                    // Primero noticias donde el título contiene la consulta
-                    { !it.neutralTitle.normalized().contains(lowerQuery, ignoreCase = true) },
-                    // Después por fecha de creación (más recientes primero)
-                    { it.date ?: 0 }
-                ))
-
-                Log.d("Búsqueda", "Total resultados encontrados: ${sortedResults.size}")
-
-                if (sortedResults.isNotEmpty()) {
-                    // Cargar noticias relacionadas
-                    loadRelatedRegularNews(sortedResults)
-
-                    // Actualizar la UI
-                    allNeutralNews = sortedResults.toMutableList()
-                    neutralNewsList.postValue(sortedResults.toMutableList())
-                    Log.d("Búsqueda", "No results: false")
-                    showNoResults.postValue(false)
-                    messageEvent.postValue("Se encontraron ${sortedResults.size} resultados")
-                } else {
-                    Log.d("Búsqueda", "No se encontraron resultados para: '$lowerQuery'")
-                    allNeutralNews.clear()
-                    neutralNewsList.postValue(mutableListOf())
-                    Log.d("Búsqueda", "No results: false")
-                    showNoResults.postValue(true)
-                    messageEvent.postValue("No se encontraron resultados para: $query")
-                }
-            } catch (e: Exception) {
-                Log.e("Búsqueda", "Error en búsqueda: ${e.message}", e)
-                messageEvent.postValue("Error en búsqueda: ${e.message}")
-            } finally {
-            }
-        }
-    }
-
 }
-

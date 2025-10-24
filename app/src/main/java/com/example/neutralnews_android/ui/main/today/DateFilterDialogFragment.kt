@@ -13,8 +13,6 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.fragment.app.setFragmentResult
 import com.example.neutralnews_android.R
-import com.example.neutralnews_android.ui.main.filter.DateGridAdapter
-import com.example.neutralnews_android.ui.main.filter.DayItem
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.lifecycle.lifecycleScope

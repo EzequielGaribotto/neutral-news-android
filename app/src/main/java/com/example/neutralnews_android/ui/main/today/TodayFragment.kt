@@ -53,6 +53,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.text.category
 
 
 /**
@@ -68,7 +69,7 @@ class TodayFragment : AppFragment() {
     private lateinit var newsAdapter: SimpleRecyclerViewAdapter<NewsBean, RowNewsBinding>
     private var isSearchActive = false
     private var isSettingText = false
-    private var currentSortType: SortType = SortType.DATE_DESC
+    private var currentSortType: TodaySortType = TodaySortType.DATE_DESC
 
     // Enum para definir los tipos de filtro por fecha
     enum class DateFilterType {
@@ -85,14 +86,6 @@ class TodayFragment : AppFragment() {
 
     // Flag para evitar abrir varios diálogos a la vez
     private var isDateDialogOpen = false
-
-    // Enum to define sort types
-    enum class SortType {
-        DATE_DESC, DATE_ASC,
-        UPDATED_AT_DESC, UPDATED_AT_ASC,
-        RELEVANCE_DESC, RELEVANCE_ASC,
-        SOURCES_DESC, SOURCES_ASC
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -199,6 +192,8 @@ class TodayFragment : AppFragment() {
         val selectedCount = filterData.selectedDates?.size ?: selectedDates.size
         if (selectedCount > 0) {
             binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
+            // start progressive DB load for selected dates
+            vm.loadForSelectedDates()
         } else {
             binding.imgDateFilter.clearColorFilter()
         }
@@ -361,14 +356,14 @@ class TodayFragment : AppFragment() {
 
         // Determinar ítem seleccionado y dirección
         val (selectedId, isAsc) = when (currentSortType) {
-            SortType.DATE_DESC -> Pair(R.id.menu_sort_date, false)
-            SortType.DATE_ASC -> Pair(R.id.menu_sort_date, true)
-            SortType.UPDATED_AT_DESC -> Pair(R.id.menu_sort_updated_at, false)
-            SortType.UPDATED_AT_ASC -> Pair(R.id.menu_sort_updated_at, true)
-            SortType.RELEVANCE_DESC -> Pair(R.id.menu_sort_relevance, false)
-            SortType.RELEVANCE_ASC -> Pair(R.id.menu_sort_relevance, true)
-            SortType.SOURCES_DESC -> Pair(R.id.menu_sort_sources, false)
-            SortType.SOURCES_ASC -> Pair(R.id.menu_sort_sources, true)
+            TodaySortType.DATE_DESC -> Pair(R.id.menu_sort_date, false)
+            TodaySortType.DATE_ASC -> Pair(R.id.menu_sort_date, true)
+            TodaySortType.UPDATED_AT_DESC -> Pair(R.id.menu_sort_updated_at, false)
+            TodaySortType.UPDATED_AT_ASC -> Pair(R.id.menu_sort_updated_at, true)
+            TodaySortType.RELEVANCE_DESC -> Pair(R.id.menu_sort_relevance, false)
+            TodaySortType.RELEVANCE_ASC -> Pair(R.id.menu_sort_relevance, true)
+            TodaySortType.SOURCES_DESC -> Pair(R.id.menu_sort_sources, false)
+            TodaySortType.SOURCES_ASC -> Pair(R.id.menu_sort_sources, true)
         }
 
         // Resaltar ítem seleccionado y poner icono de dirección
@@ -387,26 +382,26 @@ class TodayFragment : AppFragment() {
         popup.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
                 R.id.menu_sort_date -> {
-                    currentSortType = if (currentSortType == SortType.DATE_DESC)
-                        SortType.DATE_ASC else SortType.DATE_DESC
+                    currentSortType = if (currentSortType == TodaySortType.DATE_DESC)
+                        TodaySortType.DATE_ASC else TodaySortType.DATE_DESC
                     sortNewsList()
                     true
                 }
                 R.id.menu_sort_updated_at -> {
-                    currentSortType = if (currentSortType == SortType.UPDATED_AT_DESC)
-                        SortType.UPDATED_AT_ASC else SortType.UPDATED_AT_DESC
+                    currentSortType = if (currentSortType == TodaySortType.UPDATED_AT_DESC)
+                        TodaySortType.UPDATED_AT_ASC else TodaySortType.UPDATED_AT_DESC
                     sortNewsList()
                     true
                 }
                 R.id.menu_sort_relevance -> {
-                    currentSortType = if (currentSortType == SortType.RELEVANCE_DESC)
-                        SortType.RELEVANCE_ASC else SortType.RELEVANCE_DESC
+                    currentSortType = if (currentSortType == TodaySortType.RELEVANCE_DESC)
+                        TodaySortType.RELEVANCE_ASC else TodaySortType.RELEVANCE_DESC
                     sortNewsList()
                     true
                 }
                 R.id.menu_sort_sources -> {
-                    currentSortType = if (currentSortType == SortType.SOURCES_DESC)
-                        SortType.SOURCES_ASC else SortType.SOURCES_DESC
+                    currentSortType = if (currentSortType == TodaySortType.SOURCES_DESC)
+                        TodaySortType.SOURCES_ASC else TodaySortType.SOURCES_DESC
                     sortNewsList()
                     true
                 }
@@ -420,24 +415,8 @@ class TodayFragment : AppFragment() {
      * Sorts the news list based on the current sort type.
      */
     private fun sortNewsList() {
-        val currentList = newsAdapter.list.toMutableList()
-
-        val sortedList = when (currentSortType) {
-            SortType.DATE_DESC -> currentList.sortedByDescending { parseDateToTimestamp(it.date) }
-            SortType.DATE_ASC -> currentList.sortedBy { parseDateToTimestamp(it.date) }
-            SortType.UPDATED_AT_DESC -> currentList.sortedByDescending { parseDateToTimestamp(it.updatedAt) }
-            SortType.UPDATED_AT_ASC -> currentList.sortedBy { parseDateToTimestamp(it.updatedAt) }
-            SortType.RELEVANCE_DESC -> currentList.sortedByDescending { it.relevance ?: 0.0 }
-            SortType.RELEVANCE_ASC -> currentList.sortedBy { it.relevance ?: 0.0 }
-            SortType.SOURCES_DESC -> currentList.sortedByDescending { it.sourceIds?.size ?: 0 }
-            SortType.SOURCES_ASC -> currentList.sortedBy { it.sourceIds?.size ?: 0 }
-        }
-
-        newsAdapter.list = sortedList
-        newsAdapter.notifyDataSetChanged()
-
-        // Scroll to top after sorting
-        binding.rvTodayNews.scrollToPosition(0)
+        // Update the sort type in ViewModel, which will sort the cached lists and reapply filters
+        vm.updateSortType(currentSortType)
     }
 
     /**
@@ -669,6 +648,7 @@ class TodayFragment : AppFragment() {
         }
     }
 
+    // Reemplazar la función observeNewsList dentro de `TodayFragment.kt` por esta versión
     private fun observeNewsList() {
         vm.neutralNewsList.observe(viewLifecycleOwner) { news ->
             val newsItems = news.map { neutralNews ->
@@ -689,13 +669,16 @@ class TodayFragment : AppFragment() {
             newsAdapter.list = if (isSearchActive) {
                 newsItems
             } else {
+                // Aplicar orden localmente según currentSortType para evitar reinvocar al ViewModel
                 when (currentSortType) {
-                    SortType.DATE_DESC -> newsItems.sortedByDescending { parseDateToTimestamp(it.date) }
-                    // Apply other sort types based on current selection
-                    else -> {
-                        sortNewsList()
-                        newsItems
-                    }
+                    TodaySortType.DATE_DESC -> newsItems.sortedByDescending { parseDateToTimestamp(it.date) }
+                    TodaySortType.DATE_ASC -> newsItems.sortedBy { parseDateToTimestamp(it.date) }
+                    TodaySortType.UPDATED_AT_DESC -> newsItems.sortedByDescending { parseDateToTimestamp(it.updatedAt) }
+                    TodaySortType.UPDATED_AT_ASC -> newsItems.sortedBy { parseDateToTimestamp(it.updatedAt) }
+                    TodaySortType.RELEVANCE_DESC -> newsItems.sortedByDescending { it.relevance ?: 0.0 }
+                    TodaySortType.RELEVANCE_ASC -> newsItems.sortedBy { it.relevance ?: 0.0 }
+                    TodaySortType.SOURCES_DESC -> newsItems.sortedByDescending { it.sourceIds?.size ?: 0 }
+                    TodaySortType.SOURCES_ASC -> newsItems.sortedBy { it.sourceIds?.size ?: 0 }
                 }
             }
             newsAdapter.notifyDataSetChanged()
@@ -706,6 +689,7 @@ class TodayFragment : AppFragment() {
             }
         }
     }
+
     private fun parseDateToTimestamp(dateString: String?): Long {
         if (dateString.isNullOrEmpty()) return 0L
 
@@ -886,41 +870,25 @@ class TodayFragment : AppFragment() {
                     binding.etSearch.clearFocus()
                     hideKeyboard()
                 }
-
-//                // Solo procesar cuando se detiene el scroll
-//                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-//                    checkForPagination(recyclerView)
-//                }
             }
 
-//            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-//                super.onScrolled(recyclerView, dx, dy)
-//
-//                // Solo procesar scroll hacia abajo y evitar múltiples llamadas
-//                if (dy > 0 && !isScrollListenerProcessing && !isSearchActive) {
-//                    isScrollListenerProcessing = true
-//                    recyclerView.post {
-//                        checkForPagination(recyclerView)
-//                        isScrollListenerProcessing = false
-//                    }
-//                }
-//            }
-//
-//            private fun checkForPagination(recyclerView: RecyclerView) {
-//                if (vm.isPaginating.value == true || isSearchActive) return
-//
-//                val layoutManager = recyclerView.layoutManager as LinearLayoutManager
-//                val visibleItemCount = layoutManager.childCount
-//                val totalItemCount = layoutManager.itemCount
-//                val firstVisibleItem = layoutManager.findFirstVisibleItemPosition()
-//
-//                // Si estamos cerca del final (últimos 8 elementos), cargar más
-//                if ((visibleItemCount + firstVisibleItem) >= totalItemCount - 8
-//                    && firstVisibleItem >= 0) {
-//                    Log.d("Paginación", "Solicitando nueva página de noticias")
-//                    vm.loadNextPage()
-//                }
-//            }
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                if (dy <= 0) return
+                if (isSearchActive) return
+
+                val layoutManager = recyclerView.layoutManager as LinearLayoutManager
+                val visibleItemCount = layoutManager.childCount
+                val totalItemCount = layoutManager.itemCount
+                val firstVisibleItem = layoutManager.findFirstVisibleItemPosition()
+
+                // if we are within threshold from the end, load next page
+                val threshold = 6
+                if ((visibleItemCount + firstVisibleItem) >= totalItemCount - threshold) {
+                    // ask VM to load next page; VM will guard concurrent calls
+                    vm.loadNextPage()
+                }
+            }
         })
     }
 
@@ -939,30 +907,11 @@ class TodayFragment : AppFragment() {
         // Determine if tag selections changed (FilterActivity already computed this flag for tags)
         val tagsChanged = result.data?.getBooleanExtra("filters_changed", false) ?: false
 
-        // Determine if selectedDates changed compared to current filterData
-        val oldDates = filterData.selectedDates ?: emptyList<Date>()
-        val newDates = newFilter.selectedDates ?: emptyList<Date>()
-        val dateChanged = if (oldDates.size != newDates.size) true else {
-            // compare by day
-            fun sameDay(a: Date, b: Date): Boolean {
-                val ca = java.util.Calendar.getInstance().apply { time = a }
-                val cb = java.util.Calendar.getInstance().apply { time = b }
-                return ca.get(java.util.Calendar.YEAR) == cb.get(java.util.Calendar.YEAR)
-                        && ca.get(java.util.Calendar.MONTH) == cb.get(java.util.Calendar.MONTH)
-                        && ca.get(java.util.Calendar.DAY_OF_MONTH) == cb.get(java.util.Calendar.DAY_OF_MONTH)
-            }
-            var changed = false
-            for (d in newDates) {
-                if (oldDates.none { od -> sameDay(od, d) }) { changed = true; break }
-            }
-            changed
-        }
-
         // Update local filterData to the new one
         filterData = newFilter
 
         // Apply only if tags or dates changed
-        if (tagsChanged || dateChanged) {
+        if (tagsChanged) {
             isSearchActive = false
             vm.applyFilters(filterData)
             vm.applyFiltersAndSearch(force = true)

@@ -1,4 +1,4 @@
-package com.example.neutralnews_android.ui.main.filter
+package com.example.neutralnews_android.ui.main.today
 
 import android.view.LayoutInflater
 import android.view.View
