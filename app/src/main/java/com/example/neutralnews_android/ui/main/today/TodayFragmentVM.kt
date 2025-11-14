@@ -4,31 +4,14 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.example.neutralnews_android.data.Constants.NeutralNew.DATE
-import com.example.neutralnews_android.data.Constants.NeutralNew.IMAGE_MEDIUM
-import com.example.neutralnews_android.data.Constants.NeutralNew.NEUTRAL_DESCRIPTION
 import com.example.neutralnews_android.data.Constants.NeutralNew.NEUTRAL_NEWS
-import com.example.neutralnews_android.data.Constants.NeutralNew.NEUTRAL_TITLE
-import com.example.neutralnews_android.data.Constants.NeutralNew.SOURCE_IDS
-import com.example.neutralnews_android.data.Constants.News.CATEGORY
 import com.example.neutralnews_android.data.Constants.News.DESCRIPTION
 import com.example.neutralnews_android.data.Constants.News.GROUP
-import com.example.neutralnews_android.data.Constants.News.IMAGE_URL
-import com.example.neutralnews_android.data.Constants.News.LINK
 import com.example.neutralnews_android.data.Constants.News.NEWS
-import com.example.neutralnews_android.data.Constants.News.PUB_DATE
-import com.example.neutralnews_android.data.Constants.News.SCRAPED_DESCRIPTION
-import com.example.neutralnews_android.data.Constants.News.SOURCE_MEDIUM
-import com.example.neutralnews_android.data.Constants.News.TITLE
-import com.example.neutralnews_android.data.Constants.News.CREATED_AT
-import com.example.neutralnews_android.data.Constants.News.RELEVANCE
-import com.example.neutralnews_android.data.Constants.News.NEUTRAL_SCORE
-import com.example.neutralnews_android.data.Constants.News.UPDATED_AT
-import com.example.neutralnews_android.data.Constants.DateFormat.DATE_FORMAT
 import com.example.neutralnews_android.data.bean.filter.LocalFilterBean
 import com.example.neutralnews_android.data.bean.news.NeutralNewsBean
 import com.example.neutralnews_android.data.bean.news.NewsBean
-import com.example.neutralnews_android.data.bean.news.pressmedia.MediaBean
+import com.example.neutralnews_android.data.remote.SnapshotManager
 import com.example.neutralnews_android.data.room.AppDatabase
 import com.example.neutralnews_android.data.room.dao.NeutralNewsDao
 import com.example.neutralnews_android.data.room.dao.NewsDao
@@ -38,11 +21,8 @@ import com.example.neutralnews_android.di.event.SingleLiveEvent
 import com.example.neutralnews_android.di.viewmodel.BaseViewModel
 import com.example.neutralnews_android.util.Prefs
 import com.example.neutralnews_android.util.string.normalized
-import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.Query
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -50,7 +30,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -59,28 +38,13 @@ import javax.inject.Inject
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-import java.util.concurrent.ConcurrentHashMap
 
-/**
- * ViewModel para el fragmento de noticias de hoy.
- *
- * Esta versión está adaptada para obtener noticias desde Firestore e incluye funcionalidad de búsqueda.
- */
 @HiltViewModel
 class TodayFragmentVM @Inject constructor(application: Application) : BaseViewModel(application) {
-    // Variables para paginación
     private val pageSize = 10
-    private var lastLoadedTimestamp: Timestamp? = null
-    private var isLoadingFirstPage = false
     private var isLoadingMoreItems = false
-    private var hasMoreItems = true
-    val isPaginating =
-        SingleLiveEvent<Boolean>() // Para mostrar indicador de carga al final de la lista
-
-    // Nuevo: helper de paginación
+    val isPaginating = SingleLiveEvent<Boolean>()
     private val paginationHelper = PaginationHelper(pageSize = pageSize, initialDisplayLimit = 15)
-
-
     private val groupsOfNews = mutableMapOf<Int, List<NewsBean>>()
     val messageEvent = SingleLiveEvent<String>()
     val isLoading = SingleLiveEvent<Boolean>()
@@ -93,9 +57,17 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     private var currentFilterData = LocalFilterBean()
     val searchQuery = MutableLiveData<String>("")
     val showNoResults = MutableLiveData<Boolean>(false)
-
-    // Ordenación
     val currentSortType = MutableLiveData<TodaySortType>(TodaySortType.DATE_DESC)
+
+    private val snapshotManager = SnapshotManager()
+    private var newsListenerCompleted = false
+    private var neutralNewsListenerCompleted = false
+    private var isCacheLoading = false
+    private var dataLoaded = false
+    private var filteredNeutralNewsCache = listOf<NeutralNewsBean>()
+    private var filteredRegularNewsCache = listOf<NewsBean>()
+    private var filtersApplied = false
+    private var lastAppliedFilter = LocalFilterBean()
 
     init {
         val database = AppDatabase.getDatabase(application)
@@ -103,68 +75,118 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         newsDao = database.newsDao()
     }
 
+    // === Public API - Date Filter Management ===
+
+    fun parseDateToTimestamp(dateString: String?): Long =
+        DateFormatterHelper.parseDateToTimestamp(dateString)
+
+    fun onDateFilterApplied(selectedList: List<Date>) {
+        currentFilterData.selectedDates = if (selectedList.isEmpty()) null else selectedList
+        DateFilterHelper.persistSelectedDates(selectedList)
+        if (selectedList.isNotEmpty()) loadForSelectedDates()
+        applyFiltersAndSearch(force = true)
+    }
+
+    fun restoreSelectedDatesFromPrefs(): List<Date> {
+        val dates = DateFilterHelper.restoreSelectedDates()
+        if (dates.isNotEmpty()) {
+            currentFilterData.selectedDates = dates
+            applyFiltersAndSearch()
+        }
+        return dates
+    }
+
+    fun getSelectedDatesFormatted(): Set<String> =
+        DateFilterHelper.formatSelectedDates(currentFilterData.selectedDates ?: emptyList())
+
+    fun getSelectedDatesMillis(): LongArray =
+        DateFilterHelper.datesToMillisArray(currentFilterData.selectedDates ?: emptyList())
+
+    fun clearSelectedDates() {
+        currentFilterData.selectedDates = null
+        DateFilterHelper.clearSelectedDates()
+        applyFiltersAndSearch(force = true)
+    }
+
+    fun calculatePastDays(pastDays: MutableMap<String, Date>): Map<String, Date> {
+        pastDays.clear()
+        pastDays.putAll(DateFormatterHelper.calculatePastDays())
+        return pastDays
+    }
+
+    // === Public API - Data Loading ===
 
     fun setInitialData() {
         viewModelScope.launch {
             isLoading.postValue(true)
-            // Calculate initial date range: today and yesterday if morning
             val calendar = Calendar.getInstance()
             val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
             val includeYesterday = currentHour < 12
 
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            val todayStart = calendar.timeInMillis
+            val dateRanges = buildInitialDateRanges(calendar, includeYesterday)
+            loadNews(dateRanges)
 
-            calendar.set(Calendar.HOUR_OF_DAY, 23)
-            calendar.set(Calendar.MINUTE, 59)
-            calendar.set(Calendar.SECOND, 59)
-            calendar.set(Calendar.MILLISECOND, 999)
-            val todayEnd = calendar.timeInMillis
-
-            val yesterdayStart = if (includeYesterday) {
-                calendar.add(Calendar.DAY_OF_YEAR, -1)
-                calendar.set(Calendar.HOUR_OF_DAY, 0)
-                calendar.set(Calendar.MINUTE, 0)
-                calendar.set(Calendar.SECOND, 0)
-                calendar.set(Calendar.MILLISECOND, 0)
-                calendar.timeInMillis
-            } else null
-
-            val yesterdayEnd = if (includeYesterday) {
-                calendar.set(Calendar.HOUR_OF_DAY, 23)
-                calendar.set(Calendar.MINUTE, 59)
-                calendar.set(Calendar.SECOND, 59)
-                calendar.set(Calendar.MILLISECOND, 999)
-                calendar.timeInMillis
-            } else null
-
-            loadNews(initialDateRanges = listOfNotNull(
-                Pair(todayStart, todayEnd),
-                if (yesterdayStart != null && yesterdayEnd != null) Pair(yesterdayStart, yesterdayEnd) else null
-            ))
-            // compute and cache available days once per day (avoid running on every dialog open)
-            try {
-                val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                val generatedDate = Prefs.getString("available_days_generated_date", null)
-                if (generatedDate == null || generatedDate != todayKey) {
-                    computeAndCacheAvailableDays()
-                    Prefs.putString("available_days_generated_date", todayKey)
-                }
-            } catch (_: Exception) {
-                // ignore
-            }
+            computeAvailableDaysIfNeeded()
             applyFiltersAndSearch()
             isLoading.postValue(false)
         }
     }
 
-    /**
-     * Precompute available days per month around current month and cache in Prefs.
-     * This runs once at app startup to avoid querying DB when opening the dialog.
-     */
+    private fun buildInitialDateRanges(calendar: Calendar, includeYesterday: Boolean): List<Pair<Long, Long>> {
+        calendar.apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val todayStart = calendar.timeInMillis
+
+        calendar.apply {
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val todayEnd = calendar.timeInMillis
+
+        val ranges = mutableListOf(Pair(todayStart, todayEnd))
+
+        if (includeYesterday) {
+            calendar.add(Calendar.DAY_OF_YEAR, -1)
+            calendar.apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val yesterdayStart = calendar.timeInMillis
+
+            calendar.apply {
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }
+            val yesterdayEnd = calendar.timeInMillis
+            ranges.add(Pair(yesterdayStart, yesterdayEnd))
+        }
+
+        return ranges
+    }
+
+    private fun computeAvailableDaysIfNeeded() {
+        try {
+            val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val generatedDate = Prefs.getString("available_days_generated_date", null)
+            if (generatedDate == null || generatedDate != todayKey) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    computeAndCacheAvailableDays()
+                }
+                Prefs.putString("available_days_generated_date", todayKey)
+            }
+        } catch (_: Exception) { }
+    }
+
     private suspend fun computeAndCacheAvailableDays() {
         withContext(Dispatchers.IO) {
             try {
@@ -176,103 +198,74 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                 val currentYear = cal.get(Calendar.YEAR)
                 val currentMonth = cal.get(Calendar.MONTH) + 1
 
-                // range: previous month .. next 2 months (adjustable)
-                val monthsToCompute = listOf(-1, 0, 1, 2)
-
-                for (offset in monthsToCompute) {
-                    val target = Calendar.getInstance()
-                    target.set(Calendar.YEAR, currentYear)
-                    target.set(Calendar.MONTH, currentMonth - 1)
-                    target.add(Calendar.MONTH, offset)
+                for (offset in listOf(-1, 0, 1, 2)) {
+                    val target = Calendar.getInstance().apply {
+                        set(Calendar.YEAR, currentYear)
+                        set(Calendar.MONTH, currentMonth - 1)
+                        add(Calendar.MONTH, offset)
+                    }
                     val y = target.get(Calendar.YEAR)
                     val m = target.get(Calendar.MONTH) + 1
 
-                    // start / end millis for the month
-                    target.set(Calendar.DAY_OF_MONTH, 1)
-                    target.set(Calendar.HOUR_OF_DAY, 0)
-                    target.set(Calendar.MINUTE, 0)
-                    target.set(Calendar.SECOND, 0)
-                    target.set(Calendar.MILLISECOND, 0)
-                    val from = target.timeInMillis
-
-                    val lastDay = target.getActualMaximum(Calendar.DAY_OF_MONTH)
-                    target.set(Calendar.DAY_OF_MONTH, lastDay)
-                    target.set(Calendar.HOUR_OF_DAY, 23)
-                    target.set(Calendar.MINUTE, 59)
-                    target.set(Calendar.SECOND, 59)
-                    target.set(Calendar.MILLISECOND, 999)
-                    val to = target.timeInMillis
-
+                    val (from, to) = getMonthRange(target)
                     val days = mutableSetOf<Int>()
 
-                    try {
-                        val newsInRange = newsDaoLocal.getNewsBetween(from, to)
-                        for (n in newsInRange) {
-                            val ts = if (n.pubDate > 0L) n.pubDate else if (n.createdAt > 0L) n.createdAt else n.updatedAt
-                            if (ts > 0L) {
-                                val c = Calendar.getInstance()
-                                c.timeInMillis = ts
-                                days.add(c.get(Calendar.DAY_OF_MONTH))
-                            }
-                        }
-                    } catch (_: Exception) {
-                    }
+                    extractDaysFromNews(newsDaoLocal.getNewsBetween(from, to), days)
+                    extractDaysFromNeutralNews(neutralDaoLocal.getNewsBetween(from, to), days)
 
-                    try {
-                        val neutralInRange = neutralDaoLocal.getNewsBetween(from, to)
-                        for (ne in neutralInRange) {
-                            // prefer 'date' if present
-                            try {
-                                val cls = ne::class
-                                val dateField = cls.java.getDeclaredField("date")
-                                dateField.isAccessible = true
-                                val dateVal = dateField.getLong(ne)
-                                val millis = if (dateVal in 1..9999999999L) dateVal * 1000L else dateVal
-                                if (millis > 0L) {
-                                    val c = Calendar.getInstance()
-                                    c.timeInMillis = millis
-                                    days.add(c.get(Calendar.DAY_OF_MONTH))
-                                }
-                            } catch (_: Exception) {
-                                try {
-                                    val createdField = ne::class.java.getDeclaredField("createdAt")
-                                    createdField.isAccessible = true
-                                    val createdVal = createdField.getLong(ne)
-                                    val millis = if (createdVal in 1..9999999999L) createdVal * 1000L else createdVal
-                                    if (millis > 0L) {
-                                        val c = Calendar.getInstance()
-                                        c.timeInMillis = millis
-                                        days.add(c.get(Calendar.DAY_OF_MONTH))
-                                    }
-                                } catch (_: Exception) { }
-                            }
-                        }
-                    } catch (_: Exception) {
-                    }
-
-                    // store as CSV in Prefs
-                    val key = "available_days_${y}_${m}"
-                    val csv = days.sorted().joinToString(",")
-                    Prefs.putString(key, csv)
+                    Prefs.putString("available_days_${y}_${m}", days.sorted().joinToString(","))
                 }
 
-                // mark generation time for this app session (optional)
                 Prefs.putLong("available_days_generated_at", System.currentTimeMillis())
-            } catch (_: Exception) {
-                // ignore caching errors
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun getMonthRange(calendar: Calendar): Pair<Long, Long> {
+        calendar.apply {
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val from = calendar.timeInMillis
+
+        val lastDay = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+        calendar.apply {
+            set(Calendar.DAY_OF_MONTH, lastDay)
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val to = calendar.timeInMillis
+
+        return Pair(from, to)
+    }
+
+    private fun extractDaysFromNews(newsEntities: List<NewsEntity>, days: MutableSet<Int>) {
+        newsEntities.forEach { n ->
+            val ts = if (n.pubDate > 0L) n.pubDate else if (n.createdAt > 0L) n.createdAt else n.updatedAt
+            if (ts > 0L) {
+                val c = Calendar.getInstance()
+                c.timeInMillis = ts
+                days.add(c.get(Calendar.DAY_OF_MONTH))
             }
         }
     }
 
-    private var isCacheLoading = false
-    private var isFirestoreLoading = false
-    private var dataLoaded = false
+    private fun extractDaysFromNeutralNews(neutralEntities: List<NeutralNewsEntity>, days: MutableSet<Int>) {
+        neutralEntities.forEach { ne ->
+            val ts = if (ne.date > 0L) ne.date else if (ne.createdAt > 0L) ne.createdAt else ne.updatedAt
+            if (ts > 0L) {
+                val c = Calendar.getInstance()
+                c.timeInMillis = ts
+                days.add(c.get(Calendar.DAY_OF_MONTH))
+            }
+        }
+    }
 
-    /**
-     * Carga datos desde la caché local.
-     *
-     * @return True si hay datos en caché no vacíos, False en caso contrario.
-     */
     private suspend fun loadNews(initialDateRanges: List<Pair<Long, Long>> = emptyList()) {
         if (isCacheLoading) return
         isCacheLoading = true
@@ -283,219 +276,66 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
             try {
                 coroutineScope {
-                    val regularNewsDeferred = async<Boolean> {
-                        foundCachedRegularNewsEntities(initialDateRanges)
-                    }
+                    val neutralLoaded = async { foundCachedNeutralNewsEntities() }.await()
 
-                    val neutralNewsDeferred = async<Boolean> {
-                        foundCachedNeutralNewsEntities()
-                    }
-
-                    var regularLoaded = regularNewsDeferred.await()
-                    var neutralLoaded = neutralNewsDeferred.await()
-
-                    // Crear los jobs en paralelo sin esperar inmediatamente
-                    val regularFirestoreJob = if (!regularLoaded) {
-                        Log.d("TodayFragmentVM", "Iniciando carga de noticias regulares desde Firestore")
-                        async {
-                            fetchNewsFromFirestoreSuspend(filterData = currentFilterData)
-                            true
-                        }
-                    } else null
-
-                    val neutralFirestoreJob = if (!neutralLoaded) {
+                    if (!neutralLoaded) {
                         Log.d("TodayFragmentVM", "Iniciando carga de noticias neutrales desde Firestore")
-                        async {
-                            fetchNeutralNewsFromFirestoreSuspend(filterData = currentFilterData)
-                            true
-                        }
-                    } else null
-
-                    // Esperar a que ambos terminen
-                    if (regularFirestoreJob != null) {
-                        regularLoaded = regularFirestoreJob.await()
-                        Log.d("TodayFragmentVM", "Noticias regulares cargadas desde Firestore")
-                    } else {
-                        Log.d("TodayFragmentVM", "Noticias regulares cargadas desde caché")
-                        refreshRegularNews()
-                    }
-
-                    if (neutralFirestoreJob != null) {
-                        neutralLoaded = neutralFirestoreJob.await()
-                        Log.d("TodayFragmentVM", "Noticias neutrales cargadas desde Firestore")
+                        async { fetchNeutralNewsFromFirestoreSuspend(filterData = currentFilterData) }.await()
                     } else {
                         Log.d("TodayFragmentVM", "Noticias neutrales cargadas desde caché")
                         refreshNeutralNews()
                     }
-
                 }
             } finally {
                 Log.d("TodayFragmentVM", "Loaded news")
                 isCacheLoading = false
             }
         }
-
-    }
-
-    fun refreshRegularNews() {
-        Log.d("TodayFragmentVM", "Iniciando refreshRegularNews() con SnapshotListener")
-        newsListenerCompleted = false
-        newsSnapshotListener?.remove()
-        newsSnapshotListener = null
-        setupNewsListener()
     }
 
     fun refreshNeutralNews() {
         Log.d("TodayFragmentVM", "Iniciando refreshNeutralNews() con SnapshotListener")
-        neutralNewsListenerCompleted = false
-        neutralNewsSnapshotListener?.remove()
-        neutralNewsSnapshotListener = null
-        setupNeutralNewsListener()
-    }
-
-    // Añade estas variables para mantener referencia a los listeners
-    private var newsSnapshotListener: ListenerRegistration? = null
-    private var neutralNewsSnapshotListener: ListenerRegistration? = null
-    // Variables para controlar si los listeners han completado su carga inicial
-    private var newsListenerCompleted = false
-    private var neutralNewsListenerCompleted = false
-
-    // Reemplaza refreshNews con esta implementación
-    fun refreshNews() {
-        Log.d("TodayFragmentVM", "Iniciando refreshNews() con SnapshotListener")
-
-        refreshNeutralNews()
-        refreshRegularNews()
-    }
-
-    private fun setupNewsListener() {
-        val db = FirebaseFirestore.getInstance()
-        // Usar un timestamp reciente como punto de partida
-        val startTime = Timestamp(System.currentTimeMillis()/1000 - 86400*3, 0)
-
-        // Consulta optimizada: solo documentos recientes y limitados
-        val query = db.collection(NEWS)
-            .whereGreaterThan(CREATED_AT, startTime)
-            .whereNotEqualTo(DESCRIPTION,"")
-            .whereGreaterThan(GROUP,0)
-
-        newsSnapshotListener = query.addSnapshotListener { snapshot, e ->
-            if (e != null) {
-                Log.e("setupNewsListener", "Error en listener de noticias: ${e.localizedMessage}")
-                newsListenerCompleted = true
-                checkAllListenersCompleted()
-                return@addSnapshotListener
-            }
-
-            // Procesar cambios eficientemente
-            if (snapshot != null && !snapshot.isEmpty) {
-                val changes = snapshot.documentChanges
-                val filteredChanges = changes.filter { it.type != DocumentChange.Type.REMOVED }
-
-                if (filteredChanges.isNotEmpty()) {
-                    // NO marcar como completado hasta que termine el procesamiento
-                    processSnapshotNewsDocuments(filteredChanges) { result ->
-                        // Solo ejecutar esto cuando el procesamiento asíncrono esté completo
-                        if (result || neutralNewsListenerCompleted) {
-                            newsListenerCompleted = true
-                            Log.d("TodayFragmentVM", "Cambios significativos en noticias")
-                            checkAllListenersCompleted()
-                        } else {
-                            Log.d("TodayFragmentVM", "No se encontraron cambios significativos en noticias")
-                        }
+        snapshotManager.startNeutralListener(
+            onChanges = { changes ->
+                processSnapshotNeutralNewsDocuments(changes) { result ->
+                    if (result) {
+                        neutralNewsListenerCompleted = true
+                        checkAllListenersCompleted()
                     }
-                } else {
-                    Log.d("TodayFragmentVM", "No hay cambios en las noticias")
                 }
-            } else {
-                Log.d("TodayFragmentVM", "No hay cambios en las noticias")
-            }
-        }
-    }
-
-    private fun setupNeutralNewsListener() {
-        val db = FirebaseFirestore.getInstance()
-        // Usar un timestamp reciente como punto de partida
-        val startTime = Timestamp(System.currentTimeMillis()/1000 - 86400 * 3, 0)
-
-        // Consulta optimizada
-        val query = db.collection(NEUTRAL_NEWS)
-            .whereGreaterThan(UPDATED_AT, startTime)
-            .whereNotEqualTo(NEUTRAL_DESCRIPTION,"")
-
-        neutralNewsSnapshotListener = query.addSnapshotListener { snapshot, e ->
-            if (e != null) {
-                Log.e("setupNeutralNewsListener", "Error en listener de noticias neutrales: ${e.localizedMessage}")
+            },
+            onError = { e ->
+                Log.e("TodayFragmentVM", "Error en neutral listener: ${e.localizedMessage}")
                 neutralNewsListenerCompleted = true
                 checkAllListenersCompleted()
-                return@addSnapshotListener
             }
-
-            if (snapshot != null && !snapshot.isEmpty) {
-                val changes = snapshot.documentChanges
-                val filteredChanges = changes.filter { it.type != DocumentChange.Type.REMOVED }
-
-                if (filteredChanges.isNotEmpty()) {
-                    // NO marcar como completado hasta que termine el procesamiento
-                    processSnapshotNeutralNewsDocuments(filteredChanges) { result ->
-                        // Solo ejecutar esto cuando el procesamiento asíncrono esté completo
-                        if (result || newsListenerCompleted) {
-                            Log.d("TodayFragmentVM", "Cambios significativos en noticias neutrales")
-                            neutralNewsListenerCompleted = true
-                            checkAllListenersCompleted()
-                        } else {
-                            Log.d("TodayFragmentVM", "No se encontraron cambios significativos en noticias neutrales")
-                        }
-                    }
-                } else {
-                    Log.d("TodayFragmentVM", "No hay cambios en las noticias neutrales")
-                }
-            } else {
-                Log.d("TodayFragmentVM", "No hay cambios en las noticias neutrales")
-            }
-        }
+        )
     }
 
-    /**
-     * Verifica si todos los listeners han completado su procesamiento inicial
-     * y aplica filtros y búsqueda si es así.
-     */
+    fun refreshNews() {
+        Log.d("TodayFragmentVM", "Iniciando refreshNews() con SnapshotManager")
+        refreshNeutralNews()
+    }
+
     private fun checkAllListenersCompleted() {
         if (newsListenerCompleted && neutralNewsListenerCompleted) {
             newsListenerCompleted = false
             neutralNewsListenerCompleted = false
             Log.d("TodayFragmentVM", "Todos los listeners han completado su carga inicial")
             applyFiltersAndSearch(force = true)
-        } else {
-            Log.d("TodayFragmentVM", "Esperando a que los listeners completen su carga")
         }
     }
 
-    /**
-     * Procesa los documentos de noticias neutrales nuevos o modificados.
-     *
-     * @param newDocuments Lista de cambios de documentos.
-     */
     private fun processSnapshotNeutralNewsDocuments(newDocuments: List<DocumentChange>, callback: (Boolean) -> Unit) {
-        val changesByType = newDocuments.groupBy { it.type }
-        Log.d("TodayFragmentVM", "Cambios detectados (noticias neutrales): ${newDocuments.size}, por tipo: " +
-                "ADDED=${changesByType[DocumentChange.Type.ADDED]?.size ?: 0}, " +
-                "MODIFIED=${changesByType[DocumentChange.Type.MODIFIED]?.size ?: 0}, " +
-                "REMOVED=${changesByType[DocumentChange.Type.REMOVED]?.size ?: 0}")
-
-        val addedOrModifiedDocs = newDocuments
-            .filter { it.type == DocumentChange.Type.ADDED || it.type == DocumentChange.Type.MODIFIED }
-
-        if (addedOrModifiedDocs.isEmpty()) {
+        if (newDocuments.isEmpty()) {
             callback(false)
             return
         }
 
         viewModelScope.launch(Dispatchers.Default) {
-            val newsToAdd = addedOrModifiedDocs.mapNotNull { change ->
+            val newsToAdd = newDocuments.mapNotNull { change ->
                 try {
-                    val doc = change.document
-                    processNeutralNewDocument(doc.data, doc.id)
+                    FirestoreDataMapper.mapNeutralNewsDocument(change.document.data, change.document.id)
                 } catch (e: Exception) {
                     Log.e("processNewNeutralNewsDocuments", "Error: ${e.localizedMessage}")
                     null
@@ -503,106 +343,47 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             }
 
             withContext(Dispatchers.Main) {
-                if (newsToAdd.isNotEmpty()) {
-                    val existingIds = allNeutralNews.map { it.id }.toSet()
-                    val brandNewNews = newsToAdd.filter { it.id !in existingIds }
-                    val updatedNews = newsToAdd.filter { it.id in existingIds }
-                    var verifiedUpdatedNews: List<NeutralNewsBean> = emptyList()
-                    if (updatedNews.isNotEmpty()) {
-                        Log.d("TodayFragmentVM", "Verificando cambios en ${updatedNews.size} noticias neutrales")
-                        verifiedUpdatedNews = updatedNews.filter { news ->
-                            val index = allNeutralNews.indexOfFirst { it.id == news.id }
-                            if (index >= 0) {
-                                val existingNews = allNeutralNews[index]
-                                existingNews.neutralTitle != news.neutralTitle ||
-                                        existingNews.neutralDescription != news.neutralDescription
-                            } else {
-                                true
-                            }
-                        }
-
-                        if (verifiedUpdatedNews.isNotEmpty()) {
-                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} noticias neutrales con cambios reales")
-                            verifiedUpdatedNews.forEach { news ->
-                                val index = allNeutralNews.indexOfFirst { it.id == news.id }
-                                allNeutralNews[index] = news
-                                Log.d("TodayFragmentVM", "Noticia neutral actualizada: ${news.id}, título: ${news.neutralTitle}")
-                            }
-                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} en caché")
-                            saveNeutralNewsToLocalCache(verifiedUpdatedNews)
-                        }
-                    }
-
-                    if (brandNewNews.isNotEmpty()) {
-                        allNeutralNews.addAll(brandNewNews)
-                        Log.d("TodayFragmentVM", "Guardando ${brandNewNews.size} noticias neutrales en caché")
-                        saveNeutralNewsToLocalCache(brandNewNews)
-                    }
-
-                    val hasSignificantChanges = brandNewNews.isNotEmpty() || verifiedUpdatedNews.isNotEmpty()
-
-                    callback(hasSignificantChanges)
-                }
+                val hasChanges = updateNeutralNewsList(newsToAdd)
+                callback(hasChanges)
             }
         }
     }
 
-    fun processNeutralNewDocument(data: Map<String, Any>?, docId: String): NeutralNewsBean? {
-        if (data == null) return null
+    private fun updateNeutralNewsList(newsToAdd: List<NeutralNewsBean>): Boolean {
+        if (newsToAdd.isEmpty()) return false
 
-        val neutralTitle = data[NEUTRAL_TITLE] as? String ?: return null
-        val neutralDescription = data[NEUTRAL_DESCRIPTION] as? String ?: return null
-        val group = data[GROUP] as? Long ?: return null
-        val category = data[CATEGORY] as? String ?: return null
-        val imageUrl = data[IMAGE_URL] as? String
-        val createdAt = data[CREATED_AT] as? Timestamp
-        val date = data[DATE] as? Timestamp
-        val updatedAt = data[UPDATED_AT] as? Timestamp
-        val sourceIds = data[SOURCE_IDS] as? List<String>
-        val relevance = data[RELEVANCE] as? Double ?: (data[RELEVANCE] as? Long)?.toDouble()
-        val imageMediumRaw = data[IMAGE_MEDIUM] as? String
-        val formattedCreatedAt = formatDateToSpanish(createdAt)
-        val formattedDate = formatDateToSpanish(date)
-        val formattedUpdatedAt = formatDateToSpanish(updatedAt)
-        val imageMedium = MediaBean.entries.find {
-            it.pressMedia.name?.normalized() == imageMediumRaw?.normalized()
-        }?.pressMedia?.name
+        val existingIds = allNeutralNews.map { it.id }.toSet()
+        val brandNewNews = newsToAdd.filter { it.id !in existingIds }
+        val updatedNews = newsToAdd.filter { it.id in existingIds }
 
-        if (imageMediumRaw == null) {
-            Log.e(
-                "processNewDocument",
-                "sourceMedium not found for: $imageMediumRaw"
-            )
-            return null
+        val verifiedUpdatedNews = updatedNews.filter { news ->
+            val existing = allNeutralNews.find { it.id == news.id }
+            existing?.let {
+                it.neutralTitle != news.neutralTitle || it.neutralDescription != news.neutralDescription
+            } ?: true
         }
-        return NeutralNewsBean(
-            id = docId,
-            neutralTitle = neutralTitle,
-            neutralDescription = neutralDescription,
-            group = group.toInt(),
-            category = category,
-            imageUrl = imageUrl,
-            createdAt = formattedCreatedAt,
-            date = formattedDate,
-            updatedAt = formattedUpdatedAt,
-            sourceIds = sourceIds,
-            relevance = relevance,
-            imageMedium = imageMedium
-        )
-    }
 
-    /**
-     * Guarda las noticias neutrales en caché local.
-     *
-     * @param newsList Lista de noticias neutrales a guardar.
-     */
+        if (verifiedUpdatedNews.isNotEmpty()) {
+            verifiedUpdatedNews.forEach { news ->
+                val index = allNeutralNews.indexOfFirst { it.id == news.id }
+                allNeutralNews[index] = news
+            }
+            saveNeutralNewsToLocalCache(verifiedUpdatedNews)
+        }
+
+        if (brandNewNews.isNotEmpty()) {
+            allNeutralNews.addAll(brandNewNews)
+            saveNeutralNewsToLocalCache(brandNewNews)
+        }
+
+        return brandNewNews.isNotEmpty() || verifiedUpdatedNews.isNotEmpty()
+    }
 
     private fun saveNeutralNewsToLocalCache(newsList: List<NeutralNewsBean>) {
         if (newsList.isEmpty()) return
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Convertir en lotes de 50 para operaciones más eficientes
                 newsList.chunked(50).forEach { batch ->
                     val entities = batch.mapNotNull { news ->
                         try {
@@ -613,9 +394,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                                 category = news.category,
                                 imageUrl = news.imageUrl,
                                 group = news.group,
-                                createdAt = getDateForSorting(news.createdAt)?.time ?: 0L,
-                                date = getDateForSorting(news.date)?.time ?: 0L,
-                                updatedAt = getDateForSorting(news.updatedAt)?.time ?: 0L,
+                                createdAt = DateFormatterHelper.getDateForSorting(news.createdAt)?.time ?: 0L,
+                                date = DateFormatterHelper.getDateForSorting(news.date)?.time ?: 0L,
+                                updatedAt = DateFormatterHelper.getDateForSorting(news.updatedAt)?.time ?: 0L,
                                 sourceIds = news.sourceIds,
                                 imageMedium = news.imageMedium,
                                 relevance = news.relevance
@@ -636,16 +417,10 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    /**
-     * Guarda las noticias en caché local.
-     *
-     * @param newsList Lista de noticias a guardar.
-     */
-
     private fun saveNewsToLocalCache(newsList: List<NewsBean>) {
         viewModelScope.launch(Dispatchers.IO) {
             newsList.chunked(50).forEach { batch ->
-                val entities = newsList.map { news ->
+                val entities = batch.map { news ->
                     NewsEntity(
                         id = news.id,
                         title = news.title ?: "",
@@ -653,9 +428,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         category = news.category ?: "",
                         imageUrl = news.imageUrl ?: "",
                         link = news.link,
-                        createdAt = getDateForSorting(news.createdAt)?.time ?: Long.MIN_VALUE,
-                        pubDate = getDateForSorting(news.pubDate)?.time ?: Long.MIN_VALUE,
-                        updatedAt = getDateForSorting(news.updatedAt)?.time ?: Long.MIN_VALUE,
+                        createdAt = DateFormatterHelper.getDateForSorting(news.createdAt)?.time ?: Long.MIN_VALUE,
+                        pubDate = DateFormatterHelper.getDateForSorting(news.pubDate)?.time ?: Long.MIN_VALUE,
+                        updatedAt = DateFormatterHelper.getDateForSorting(news.updatedAt)?.time ?: Long.MIN_VALUE,
                         group = news.group,
                         neutralScore = news.neutralScore,
                         sourceMediumName = news.sourceMedium?.name?.normalized() ?: ""
@@ -668,222 +443,32 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    // Eliminar listeners cuando ya no se necesitan
-    private fun removeFirestoreListeners() {
-        newsSnapshotListener?.remove()
-        newsSnapshotListener = null
-
-        neutralNewsSnapshotListener?.remove()
-        neutralNewsSnapshotListener = null
-    }
-
-    // No olvides modificar onCleared para limpiar los listeners
     override fun onCleared() {
-        removeFirestoreListeners()
+        snapshotManager.stopAll()
         compositeDisposable.clear()
         super.onCleared()
     }
 
-    private fun processNewDocument(data: Map<String, Any>, docId: String): NewsBean? {
-        val group = data[GROUP] as? Long ?: return null
-        val title = data[TITLE] as? String ?: return null
-        val description = data[DESCRIPTION] as? String ?: return null
-        val scrapedDescription = data[SCRAPED_DESCRIPTION] as? String
-        val category = data[CATEGORY] as? String
-        val imageUrl = data[IMAGE_URL] as? String
-        val link = data[LINK] as? String
-        val createdAt = data[CREATED_AT] as? Timestamp
-        val pubDate = data[PUB_DATE] as? Timestamp
-        val updatedAt = data[UPDATED_AT] as? Timestamp
-        val sourceMediumRaw = data[SOURCE_MEDIUM] as? String
-        val neutralScore = data[NEUTRAL_SCORE] as? Long
+    // === Public API - Pagination ===
 
-        val sourceMedium = MediaBean.entries.find {
-            it.pressMedia.name?.normalized() == sourceMediumRaw?.normalized()
-        }?.pressMedia
-
-        if (sourceMedium == null) {
-            Log.e(
-                "processNewDocument",
-                "sourceMedium not found for: $sourceMediumRaw"
-            )
-            return null
-        }
-
-        val newsDescription = if (scrapedDescription.isNullOrEmpty()) {
-            description
-        } else {
-            scrapedDescription
-        }
-
-        if (newsDescription.isEmpty()) {
-            Log.e("processNewDocument", "newsDescription is null or empty")
-            return null
-        }
-
-        return NewsBean(
-            id = docId,
-            title = title,
-            description = newsDescription,
-            category = category ?: "",
-            imageUrl = imageUrl ?: "",
-            link = link,
-            pubDate = formatDateToSpanish(pubDate),
-            createdAt = formatDateToSpanish(createdAt),
-            updatedAt = formatDateToSpanish(updatedAt),
-            sourceMedium = sourceMedium,
-            group = group.toInt(),
-            neutralScore = neutralScore?.toFloat(),
-
-        )
-    }
-
-    private fun processSnapshotNewsDocuments(newDocuments: List<DocumentChange>, callback: (Boolean) -> Unit) {
-        val changesByType = newDocuments.groupBy { it.type }
-        Log.d("TodayFragmentVM", "Cambios detectados (noticias normales): ${newDocuments.size}, por tipo: " +
-                "ADDED=${changesByType[DocumentChange.Type.ADDED]?.size ?: 0}, " +
-                "MODIFIED=${changesByType[DocumentChange.Type.MODIFIED]?.size ?: 0}, " +
-                "REMOVED=${changesByType[DocumentChange.Type.REMOVED]?.size ?: 0}")
-
-        val addedOrModifiedDocs = newDocuments
-            .filter { it.type == DocumentChange.Type.ADDED || it.type == DocumentChange.Type.MODIFIED }
-
-
-        if (addedOrModifiedDocs.isEmpty()) {
-            callback(false)
-            return
-        }
-        viewModelScope.launch(Dispatchers.Default) {
-            val newsToAdd = addedOrModifiedDocs.mapNotNull { change ->
-                try {
-                    val doc = change.document
-                    processNewDocument(doc.data, doc.id)
-                } catch (e: Exception) {
-                    Log.e("TodayFragmentVM", "Error: ${e.localizedMessage}")
-                    null
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                if (newsToAdd.isNotEmpty()) {
-                    val existingIds = allNews.map { it.id }.toSet()
-
-                    val brandNewNews = newsToAdd.filter { it.id !in existingIds }
-                    val updatedNews = newsToAdd.filter { it.id in existingIds }
-                    var verifiedUpdatedNews: List<NewsBean> = emptyList()
-
-                    if (updatedNews.isNotEmpty()) {
-                        Log.d("TodayFragmentVM", "Verificando cambios en ${updatedNews.size} noticias normales")
-                        verifiedUpdatedNews = updatedNews.filter { news ->
-                            val index = allNews.indexOfFirst { it.id == news.id }
-                            if (index >= 0) {
-                                val existingNews = allNews[index]
-                                // Solo actualizar si cambian estos campos específicos
-                                existingNews.title != news.title ||
-                                        existingNews.description != news.description ||
-                                        existingNews.neutralScore != news.neutralScore ||
-                                        existingNews.imageUrl != news.imageUrl ||
-                                        existingNews.group != news.group
-                            } else {
-                                true
-                            }
-                        }
-
-                        if (verifiedUpdatedNews.isNotEmpty()) {
-                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} noticias normales con cambios reales")
-                            verifiedUpdatedNews.forEach { news ->
-                                val index = allNews.indexOfFirst { it.id == news.id }
-                                allNews[index] = news
-                                Log.d("TodayFragmentVM", "Noticia normal actualizada: ${news.id}, título: ${news.title}")
-                            }
-                            Log.d("TodayFragmentVM", "Actualizando ${verifiedUpdatedNews.size} en caché")
-                            saveNewsToLocalCache(verifiedUpdatedNews)
-                        }
-                    }
-
-                    if (brandNewNews.isNotEmpty()) {
-                        allNews.addAll(brandNewNews)
-                        Log.d("TodayFragmentVM", "Guardando ${brandNewNews.size} noticias normales en caché")
-                        saveNewsToLocalCache(brandNewNews)
-                    }
-
-                    val hasSignificantChanges = brandNewNews.isNotEmpty() || verifiedUpdatedNews.isNotEmpty()
-
-                    callback(hasSignificantChanges)
-                }
-            }
-        }
-    }
-
-    // Pagination / cache progressive loading helpers
-    // ahora delegamos estado de paginación al PaginationHelper
-
-    /**
-     * Public: load next page (called from Fragment on scroll)
-     */
     fun loadNextPage() {
         if (isLoadingMoreItems) return
         viewModelScope.launch {
             isLoadingMoreItems = true
             isPaginating.postValue(true)
 
-            // Try to load next page from paginationHelper (which yields unique items)
-            val (nextRegular, nextNeutral) = withContext(Dispatchers.Default) {
-                paginationHelper.loadNextPage(allNews, allNeutralNews)
+            val nextNeutral = withContext(Dispatchers.Default) {
+                paginationHelper.loadNextPage(allNeutralNews)
             }
 
-            if (nextRegular.isNotEmpty()) {
-                allNews.addAll(nextRegular)
-            }
             if (nextNeutral.isNotEmpty()) {
                 allNeutralNews.addAll(nextNeutral)
-            }
-
-            // If nothing loaded from helper, try a DB fallback (kept minimal)
-            if (nextRegular.isEmpty() && nextNeutral.isEmpty()) {
-                Log.d("TodayFragmentVM", "Cache exhausted, cargando más desde DB condicionalmente")
+            } else if (currentFilterData.selectedDates?.isNotEmpty() == true) {
                 withContext(Dispatchers.IO) {
-                    try {
-                        val db = AppDatabase.getDatabase(getApplication())
-                        if (currentFilterData.selectedDates != null && currentFilterData.selectedDates!!.isNotEmpty()) {
-                            Log.d("TodayFragmentVM", "Cargando noticias desde DB para filtro de fechas (al paginar)")
-                            loadNewsFromDbForDateFilter()
-                        } else {
-                            val entities = db.newsDao().getAllNews()
-                            val remaining = entities.map { entity ->
-                                NewsBean(
-                                    id = entity.id,
-                                    title = entity.title,
-                                    description = entity.description,
-                                    category = entity.category ?: "",
-                                    imageUrl = entity.imageUrl ?: "",
-                                    link = entity.link,
-                                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
-                                    pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
-                                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
-                                    sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
-                                    group = entity.group,
-                                    neutralScore = entity.neutralScore
-                                )
-                            }.sortedByDescending { it.pubDate ?: "" }
-
-                            val start = allNews.size
-                            val end = (start + pageSize).coerceAtMost(remaining.size)
-                            if (start < end) {
-                                val sub = remaining.subList(start, end)
-                                // Use paginationHelper to add these to cached list to keep deduping behavior
-                                paginationHelper.setCachedRegularAll(remaining)
-                                val (moreReg, _) = paginationHelper.loadNextPage(allNews, allNeutralNews)
-                                allNews.addAll(moreReg)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("TodayFragmentVM", "Error al cargar más desde DB: ${e.localizedMessage}")
-                    }
+                    loadNewsFromDbForDateFilter()
                 }
             }
 
-            // After loading, reapply filters/search so UI updates
             withContext(Dispatchers.Default) {
                 applyFiltersAndSearch(force = true)
             }
@@ -893,71 +478,33 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    /**
-     * Load more results from DB when date filter applied. Fetch all matching then paginate locally.
-     */
     private fun loadNewsFromDbForDateFilter() {
         try {
-            Log.d("TodayFragmentVM", "Cargando noticias desde DB para filtro de fechas")
             val db = AppDatabase.getDatabase(getApplication())
-            val newsDaoLocal = db.newsDao()
             val neutralDaoLocal = db.neutralNewsDao()
 
-            // Build date ranges if selectedDates provided (we'll collect day ranges for each selected date)
-            val selected = currentFilterData.selectedDates ?: emptyList()
-            val regularFromTo = mutableListOf<Pair<Long, Long>>()
-            for (d in selected) {
+            val dates = (currentFilterData.selectedDates ?: emptyList()).map { d ->
                 val cal = Calendar.getInstance()
                 cal.time = d
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val from = cal.timeInMillis
-                cal.set(Calendar.HOUR_OF_DAY, 23)
-                cal.set(Calendar.MINUTE, 59)
-                cal.set(Calendar.SECOND, 59)
-                cal.set(Calendar.MILLISECOND, 999)
-                val to = cal.timeInMillis
-                regularFromTo.add(Pair(from, to))
-            }
-
-            // Query DB for each selected day and aggregate results
-            val newsAccum = mutableListOf<NewsBean>()
-            for ((from, to) in regularFromTo) {
-                val ents = newsDaoLocal.getNewsBetween(from, to)
-                val mapped = ents.map { entity ->
-                    NewsBean(
-                        id = entity.id,
-                        title = entity.title,
-                        description = entity.description,
-                        category = entity.category ?: "",
-                        imageUrl = entity.imageUrl ?: "",
-                        link = entity.link,
-                        createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
-                        pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
-                        updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
-                        sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
-                        group = entity.group,
-                        neutralScore = entity.neutralScore
-                    )
+                cal.apply {
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
                 }
-                newsAccum.addAll(mapped)
+                val from = cal.timeInMillis
+                cal.apply {
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }
+                val to = cal.timeInMillis
+                Pair(from, to)
             }
 
-            if (newsAccum.isNotEmpty()) {
-                // If display currently doesn't include these, replace cachedRegularAll
-                paginationHelper.setCachedRegularAll(newsAccum)
-                allNews.clear()
-                val (initialReg, _) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
-                if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
-            }
-
-            // Neutral news similar
-            val neutralAccum = mutableListOf<NeutralNewsBean>()
-            for ((from, to) in regularFromTo) {
-                val entsN = neutralDaoLocal.getNewsBetween(from, to)
-                val mappedN = entsN.map { entity ->
+            val neutralAccum = dates.flatMap { (from, to) ->
+                neutralDaoLocal.getNewsBetween(from, to).map { entity ->
                     NeutralNewsBean(
                         id = entity.id,
                         neutralTitle = entity.neutralTitle,
@@ -965,87 +512,29 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         category = entity.category.toString(),
                         imageUrl = entity.imageUrl,
                         group = entity.group!!,
-                        date = if (entity.date != Long.MIN_VALUE) formatDateToSpanish(entity.date) else null,
-                        createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
-                        updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
+                        date = if (entity.date != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.date) else null,
+                        createdAt = if (entity.createdAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.createdAt) else null,
+                        updatedAt = if (entity.updatedAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.updatedAt) else null,
                         sourceIds = entity.sourceIds,
                         relevance = entity.relevance
                     )
                 }
-                neutralAccum.addAll(mappedN)
             }
 
             val sortedNeutral = neutralAccum.sortedByDescending { it.date ?: "" }
             if (sortedNeutral.isNotEmpty()) {
                 paginationHelper.setCachedNeutralAll(sortedNeutral)
-                // prepare initial display using helper - it will ensure no duplicates
-                val (initialReg2, initialNeu2) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+                val initialNeu2 = paginationHelper.prepareInitialDisplay(allNeutralNews)
                 if (initialNeu2.isNotEmpty()) allNeutralNews.addAll(initialNeu2)
             }
-
         } catch (e: Exception) {
             Log.e("TodayFragmentVM", "Error loading from DB for date filter: ${e.localizedMessage}")
         }
     }
 
-    // Modify cache-found helpers to prepare cachedAll and initial display
-     private fun foundCachedRegularNewsEntities(initialDateRanges: List<Pair<Long, Long>> = emptyList()): Boolean {
-         val entities = newsDao.getAllNews()
-         if (entities.isNotEmpty()) {
-            // Filter by initialDateRanges if provided
-            val filteredEntities = if (initialDateRanges.isNotEmpty()) {
-                entities.filter { entity ->
-                    val ts = entity.pubDate.takeIf { it != Long.MIN_VALUE } ?: entity.createdAt
-                    if (ts <= 0L) return@filter false
-                    initialDateRanges.any { (start, end) -> ts in start..end }
-                }
-            } else {
-                entities
-            }
-
-            if (filteredEntities.isEmpty()) {
-                messageEvent.postValue("Sin noticias regulares en caché para las fechas iniciales")
-                return false
-            }
-
-            // Map and sort by pubDate desc
-            val mappedAll = filteredEntities.map { entity ->
-                NewsBean(
-                    id = entity.id,
-                    title = entity.title,
-                    description = entity.description,
-                    category = entity.category ?: "",
-                    imageUrl = entity.imageUrl ?: "",
-                    link = entity.link,
-                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
-                    pubDate = if (entity.pubDate != Long.MIN_VALUE) formatDateToSpanish(entity.pubDate) else null,
-                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
-                    sourceMedium = MediaBean.entries.find { it.pressMedia.name?.normalized() == entity.sourceMediumName?.normalized() }?.pressMedia,
-                    group = entity.group,
-                    neutralScore = entity.neutralScore
-                )
-            }.sortedByDescending { it.pubDate ?: "" }
-
-            // set into pagination helper and prepare initial display
-            paginationHelper.setCachedRegularAll(mappedAll)
-            paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
-            allNews = mutableListOf()
-            val (initialReg, _) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
-            if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
-
-            dataLoaded = true
-            messageEvent.postValue("Noticias regulares cargadas desde caché: ${allNews.size}")
-            return true
-        } else {
-            messageEvent.postValue("Sin noticias regulares en caché")
-            return false
-        }
-     }
-
-     private suspend fun foundCachedNeutralNewsEntities(): Boolean {
-         val entities = neutralNewsDao.getAllNews().firstOrNull() ?: emptyList()
-         return if (entities.isNotEmpty()) {
-            // Map and sort by date desc
+    private suspend fun foundCachedNeutralNewsEntities(): Boolean {
+        val entities = neutralNewsDao.getAllNews().firstOrNull() ?: emptyList()
+        return if (entities.isNotEmpty()) {
             val mappedAll = entities.map { entity ->
                 NeutralNewsBean(
                     id = entity.id,
@@ -1054,32 +543,17 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     category = entity.category.toString(),
                     imageUrl = entity.imageUrl,
                     group = entity.group!!,
-                    date = if (entity.date != Long.MIN_VALUE) formatDateToSpanish(entity.date) else null,
-                    createdAt = if (entity.createdAt != Long.MIN_VALUE) formatDateToSpanish(entity.createdAt) else null,
-                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) formatDateToSpanish(entity.updatedAt) else null,
+                    date = if (entity.date != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.date) else null,
+                    createdAt = if (entity.createdAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.createdAt) else null,
+                    updatedAt = if (entity.updatedAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.updatedAt) else null,
                     sourceIds = entity.sourceIds,
                     relevance = entity.relevance
                 )
             }.sortedByDescending { it.date ?: "" }
 
-            // For initial display, filter today's items
-            val todayCal = Calendar.getInstance()
-            val y = todayCal.get(Calendar.YEAR)
-            val m = todayCal.get(Calendar.MONTH)
-            val d = todayCal.get(Calendar.DAY_OF_MONTH)
-
-            val todaysMapped = mappedAll.filter { nb ->
-                // try to map back to entity date long
-                val ent = entities.find { it.id == nb.id }
-                val ts = ent?.date ?: ent?.createdAt ?: 0L
-                if (ts <= 0L) return@filter false
-                val cal = Calendar.getInstance(); cal.timeInMillis = ts
-                cal.get(Calendar.YEAR) == y && cal.get(Calendar.MONTH) == m && cal.get(Calendar.DAY_OF_MONTH) == d
-            }
-
             paginationHelper.setCachedNeutralAll(mappedAll)
             allNeutralNews = mutableListOf()
-            val (_, initialNeu) = paginationHelper.prepareInitialDisplay(allNews, allNeutralNews)
+            val initialNeu = paginationHelper.prepareInitialDisplay(allNeutralNews)
             if (initialNeu.isNotEmpty()) allNeutralNews.addAll(initialNeu)
 
             dataLoaded = true
@@ -1089,11 +563,8 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
             messageEvent.postValue("Sin noticias neutrales en caché")
             false
         }
-     }
+    }
 
-    /**
-     * Public: Trigger DB load for currently selected dates (called when user applies date filter).
-     */
     fun loadForSelectedDates() {
         viewModelScope.launch {
             isPaginating.postValue(true)
@@ -1107,21 +578,14 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         }
     }
 
-    /**
-     * Filtra noticias por consulta de búsqueda.
-     */
+    // === Public API - Search and Filter ===
+
     fun searchNews(query: String) {
         isLoading.postValue(true)
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.Default) {
-                    searchQuery.postValue(query)
-                }
-
-                withContext(Dispatchers.Default) {
-                    applyFiltersAndSearch()
-                }
-
+                searchQuery.postValue(query)
+                applyFiltersAndSearch()
             } finally {
                 isLoading.postValue(false)
             }
@@ -1133,88 +597,18 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         applyFiltersAndSearch()
     }
 
-    /**
-     * Aplica filtros a los datos de noticias sin realizar una nueva llamada a API.
-     */
     fun applyFilters(filterData: LocalFilterBean) {
         if (currentFilterData == filterData) {
             Log.d("TodayFragmentVM", "No se aplicaron cambios en los filtros")
             return
-        } else {
-            currentFilterData = filterData
         }
+        currentFilterData = filterData
         if (currentFilterData == LocalFilterBean()) {
             resetFilters()
-            return
-        }
-        applyFiltersAndSearch()
-    }
-    val hasLoadedData: Boolean
-        get() = allNeutralNews.isNotEmpty() || allNews.isNotEmpty()
-
-    // Variables para mantener resultados filtrados (antes de búsqueda)
-    private var filteredNeutralNewsCache = listOf<NeutralNewsBean>()
-    private var filteredRegularNewsCache = listOf<NewsBean>()
-    private var filtersApplied = false
-
-    internal fun applyFiltersAndSearch(force:Boolean = false) {
-        Log.d("TodayFragmentVM", "Iniciando applyFiltersAndSearch()")
-        val query = searchQuery.value ?: ""
-
-        // PASO 1: Aplicar filtros (solo si han cambiado o no se han aplicado antes)
-        if (!filtersApplied || lastAppliedFilter != currentFilterData || force) {
-            Log.d("TodayFragmentVM", "Aplicando filtros (primera vez o filtros cambiados)")
-
-            // Comenzar desde las colecciones completas
-            filteredNeutralNewsCache = allNeutralNews.toList()
-            filteredRegularNewsCache = allNews.toList()
-
-            // Aplicar filtros si existen
-            if (currentFilterData != LocalFilterBean()) {
-                Log.d("TodayFragmentVM", "Aplicando filtros: $currentFilterData")
-                filteredNeutralNewsCache = applyFiltersToNeutralNews(filteredNeutralNewsCache, currentFilterData)
-                // Extraer grupos de noticias neutrales filtradas
-                val neutralGroups = filteredNeutralNewsCache.map { it.group }.toSet()
-
-                // Filtrar noticias regulares por grupos de noticias neutrales
-                filteredRegularNewsCache = filteredRegularNewsCache.filter { news ->
-                    news.group in neutralGroups
-                }
-                Log.d("TodayFragmentVM", "Después de filtrar - noticias neutrales: ${filteredNeutralNewsCache.size}")
-                Log.d("TodayFragmentVM", "Después de filtrar - noticias regulares: ${filteredRegularNewsCache.size}")
-            }
-
-            // Actualizar mapa de grupos
-            updateGroupsOfNews(filteredRegularNewsCache)
-
-            // Marcar que ya se aplicaron filtros
-            filtersApplied = true
-            lastAppliedFilter = currentFilterData.copy()
-        }
-
-        // PASO 2: Aplicar búsqueda sobre datos ya filtrados
-        if (query.isEmpty()) {
-            Log.d("TodayFragmentVM", "Búsqueda vacía, mostrando todas las noticias filtradas")
-            neutralNewsList.postValue(filteredNeutralNewsCache)
-            newsList.postValue(formatAndGroupNews(filteredRegularNewsCache))
-            showNoResults.postValue(filteredNeutralNewsCache.isEmpty() && filteredRegularNewsCache.isEmpty())
         } else {
-            Log.d("TodayFragmentVM", "Aplicando búsqueda con consulta: '$query' sobre datos ya filtrados")
-
-            // Buscar SOLO en las colecciones ya filtradas
-            val searchedNeutral = searchInNeutralNews(filteredNeutralNewsCache, query)
-            val searchedRegular = filteredRegularNewsCache
-
-            neutralNewsList.postValue(searchedNeutral)
-            newsList.postValue(formatAndGroupNews(searchedRegular))
-            showNoResults.postValue(searchedNeutral.isEmpty() && searchedRegular.isEmpty())
+            applyFiltersAndSearch()
         }
-
-        Log.d("TodayFragmentVM", "Finalizado applyFiltersAndSearch()")
     }
-
-    // Necesitas añadir estas funciones:
-    private var lastAppliedFilter = LocalFilterBean()
 
     fun resetFilters() {
         filtersApplied = false
@@ -1222,616 +616,152 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         applyFiltersAndSearch()
     }
 
-    /**
-     * Busca dentro de la colección de noticias neutrales.
-     */
-    private fun searchInNeutralNews(
-        news: List<NeutralNewsBean>,
-        query: String
-    ): MutableList<NeutralNewsBean> {
-        if (query.isEmpty()) {
-            return news.toMutableList()
-        }
-
-        // Crear listas separadas para diferentes tipos de coincidencias
-        val titleMatches = mutableListOf<NeutralNewsBean>()
-        val descriptionMatches = mutableListOf<NeutralNewsBean>()
-        val scrapedDescriptionMatches = mutableListOf<NeutralNewsBean>()
-
-        // Verificar si es una búsqueda especializada (grupo o fuente)
-        if (query.startsWith("g", ignoreCase = true) && query.length > 1) {
-            // Búsqueda por ID de grupo - formato: "g<número>"
-            val groupId = query.substring(1).toIntOrNull()
-            if (groupId != null) {
-                Log.d("TodayFragmentVM", "Búsqueda por grupo específico: $groupId")
-                return news.filter { it.group == groupId }.toMutableList()
-            }
-        } else if (query.startsWith("s", ignoreCase = true) && query.length > 1) {
-            // Búsqueda por ID de fuente - formato: "s<id>"
-            val sourceId = query.substring(1)
-            Log.d("TodayFragmentVM", "Búsqueda por fuente específica: $sourceId")
-            return news.filter { newsItem ->
-                newsItem.sourceIds?.any { it.contains(sourceId, ignoreCase = true) } == true
-            }.toMutableList()
-        }
-
-        // Búsqueda estándar si no es especializada
-        news.forEach { newsItem ->
-            // Verificar coincidencias en el título
-            if (newsItem.group.toString().contains(query, ignoreCase = true)) {
-                titleMatches.add(newsItem)
-            }
-            else if (newsItem.id.contains(query, ignoreCase = true)) {
-                titleMatches.add(newsItem)
-            }
-            else if (newsItem.sourceIds?.any { it.contains(query, ignoreCase = true) } == true) {
-                titleMatches.add(newsItem)
-            }
-            else if (newsItem.neutralTitle.contains(query, ignoreCase = true)) {
-                titleMatches.add(newsItem)
-            }
-            // Verificar coincidencias en la descripción (solo si no coincidió ya por título)
-            else if (newsItem.neutralDescription.contains(query, ignoreCase = true)) {
-                descriptionMatches.add(newsItem)
-            }
-            // Verificar coincidencias en la descripción raspada en noticias relacionadas
-            else {
-                val relatedNewsHasMatch = groupsOfNews[newsItem.group]?.any { relatedNews ->
-                    relatedNews.description?.contains(query, ignoreCase = true) == true
-                } == true
-
-                if (relatedNewsHasMatch) {
-                    scrapedDescriptionMatches.add(newsItem)
-                }
-            }
-        }
-
-        // Combinar resultados en orden de prioridad
-        val result = mutableListOf<NeutralNewsBean>()
-        result.addAll(titleMatches)
-        result.addAll(descriptionMatches)
-        result.addAll(scrapedDescriptionMatches)
-
-        return result
+    fun reapplyFilters() {
+        applyFiltersAndSearch(force = true)
     }
 
-    /**
-     * Aplica filtros a los datos de noticias neutrales.
-     */
-    private fun applyFiltersToNeutralNews(
-        newsItems: List<NeutralNewsBean>,
-        filterData: LocalFilterBean
-    ): List<NeutralNewsBean> {
-        if (filterData == LocalFilterBean()) {
-            return newsItems.toList()
+    val hasLoadedData: Boolean
+        get() = allNeutralNews.isNotEmpty() || allNews.isNotEmpty()
+
+    internal fun applyFiltersAndSearch(force: Boolean = false) {
+        Log.d("TodayFragmentVM", "Iniciando applyFiltersAndSearch()")
+        val query = searchQuery.value ?: ""
+
+        // PASO 1: Aplicar filtros
+        if (!filtersApplied || lastAppliedFilter != currentFilterData || force) {
+            filteredNeutralNewsCache = allNeutralNews.toList()
+            filteredRegularNewsCache = allNews.toList()
+
+            if (currentFilterData != LocalFilterBean()) {
+                val filterHelper = NewsFilterHelper(groupsOfNews)
+                filteredNeutralNewsCache = filterHelper.applyFiltersToNeutralNews(filteredNeutralNewsCache, currentFilterData)
+
+                val neutralGroups = filteredNeutralNewsCache.map { it.group }.toSet()
+                filteredRegularNewsCache = filteredRegularNewsCache.filter { it.group in neutralGroups }
+            }
+
+            updateGroupsOfNews(filteredRegularNewsCache)
+            filtersApplied = true
+            lastAppliedFilter = currentFilterData.copy()
         }
 
-        return newsItems.asSequence()
-            .filter { newsItem ->
-            applyCategoryNeutralFilter(filterData, newsItem) &&
-            applyMediaFilterNeutralNews(filterData, newsItem) &&
-            applyDateFilterNeutralNews(filterData, newsItem)
-        }.toList()
-    }
-
-    private fun applyMediaFilterNeutralNews(filterData: LocalFilterBean, newsItem: NeutralNewsBean): Boolean {
-        if (filterData.media?.isEmpty() == true) {
-            return true
-        }
-        val sourceNews = groupsOfNews[newsItem.group]
-        if (sourceNews.isNullOrEmpty()) return false
-        val anySourceMediaMatches = sourceNews.any { news ->
-            val sourceMedium = news.sourceMedium?.name?.normalized()
-            val mediaFilter = filterData.media?.any { it.name?.normalized() == sourceMedium }
-            mediaFilter == true
-        }
-
-        return anySourceMediaMatches
-    }
-
-    /**
-     * Aplica el filtro de fecha a las noticias neutrales.
-     */
-    private fun applyDateFilterNeutralNews(filterData: LocalFilterBean, newsItem: NeutralNewsBean): Boolean {
-        // Si no hay filtro de fecha, mostrar todas las noticias
-        if (filterData.dateFilter == null && filterData.selectedDates.isNullOrEmpty()) {
-            return true
-        }
-
-        val newsDate = getDateForSorting(newsItem.date)
-        if (newsDate == null) {
-            // Si no podemos obtener la fecha, incluimos la noticia por defecto
-            Log.d("TodayFragmentVM", "No se pudo obtener fecha para noticia: ${newsItem.neutralTitle}")
-            return true
-        }
-
-        // Filtro múltiple - verificar si la fecha está en cualquiera de las fechas seleccionadas
-        if (filterData.selectedDates != null && filterData.selectedDates!!.isNotEmpty()) {
-            return isDateInAnySelectedDay(newsDate, filterData.selectedDates!!)
-        }
-
-        // Filtro simple (comportamiento anterior)
-        val filterDate = filterData.dateFilter
-
-        // Log para depuración
-        Log.d("TodayFragmentVM", "Comparando fechas - Noticia: ${SimpleDateFormat("dd 'DE' MMMM, HH:mm", Locale.getDefault()).format(newsDate)}")
-        Log.d("TodayFragmentVM", "Filtro: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(filterDate)}")
-        Log.d("TodayFragmentVM", "Es anterior a: ${filterData.isOlderThan}")
-
-        // Configurar las horas de inicio y fin del día
-        val calendar = Calendar.getInstance()
-        if (filterDate != null) {
-            calendar.time = filterDate
-        }
-
-        // Si estamos buscando noticias anteriores a una fecha
-        if (filterData.isOlderThan) {
-            // Establecer a inicio del día (00:00:00)
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            val startOfDay = calendar.time
-
-            Log.d("TodayFragmentVM", "Comparando antes de: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
-            val result = newsDate.before(startOfDay)
-            Log.d("TodayFragmentVM", "Resultado: $result")
-            return result
+        // PASO 2: Aplicar búsqueda y ordenación
+        val filterHelper = NewsFilterHelper(groupsOfNews)
+        val searchedNeutral = if (query.isEmpty()) {
+            filteredNeutralNewsCache
         } else {
-            // Establecer a inicio del día (00:00:00)
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            val startOfDay = calendar.time
-
-            // Establecer a fin del día (23:59:59)
-            calendar.set(Calendar.HOUR_OF_DAY, 23)
-            calendar.set(Calendar.MINUTE, 59)
-            calendar.set(Calendar.SECOND, 59)
-            calendar.set(Calendar.MILLISECOND, 999)
-            val endOfDay = calendar.time
-
-            Log.d("TodayFragmentVM", "Rango del día - Inicio: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(startOfDay)}")
-            Log.d("TodayFragmentVM", "Rango del día - Fin: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(endOfDay)}")
-
-            // Verificar si la fecha de la noticia está dentro del día seleccionado
-            val isWithinRange = (newsDate.after(startOfDay) || newsDate.equals(startOfDay)) &&
-                    (newsDate.before(endOfDay) || newsDate.equals(endOfDay))
-
-            Log.d("TodayFragmentVM", "¿Dentro del rango?: $isWithinRange")
-            return isWithinRange
-        }
-    }
-
-    /**
-     * Comprueba si una fecha está dentro de cualquiera de las fechas seleccionadas.
-     */
-    private fun isDateInAnySelectedDay(newsDate: Date, selectedDates: List<Date>): Boolean {
-        val calendar = Calendar.getInstance()
-
-        for (selectedDate in selectedDates) {
-            calendar.time = selectedDate
-
-            // Configurar inicio del día
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            val startOfDay = calendar.time
-
-            // Configurar fin del día (23:59:59)
-            calendar.set(Calendar.HOUR_OF_DAY, 23)
-            calendar.set(Calendar.MINUTE, 59)
-            calendar.set(Calendar.SECOND, 59)
-            calendar.set(Calendar.MILLISECOND, 999)
-            val endOfDay = calendar.time
-
-            // Si la noticia está dentro de este día, devolver true
-            if ((newsDate.after(startOfDay) || newsDate.equals(startOfDay)) &&
-                (newsDate.before(endOfDay) || newsDate.equals(endOfDay))) {
-                return true
-            }
+            filterHelper.searchInNeutralNews(filteredNeutralNewsCache, query)
         }
 
-        return false
+        // Aplicar ordenación
+        val sortedNeutral = NewsSorter.sortNeutralNews(searchedNeutral, currentSortType.value ?: TodaySortType.DATE_DESC)
+
+        val neutralGroupsFound = sortedNeutral.map { it.group }.toSet()
+        val searchedRegular = filteredRegularNewsCache.filter { it.group in neutralGroupsFound }
+
+        neutralNewsList.postValue(sortedNeutral)
+        newsList.postValue(NewsSorter.filterGroupedNews(searchedRegular))
+        showNoResults.postValue(sortedNeutral.isEmpty() && searchedRegular.isEmpty())
+
+        Log.d("TodayFragmentVM", "Finalizado applyFiltersAndSearch()")
     }
 
-    /**
-     * Actualiza el mapa groupsOfNews con las noticias filtradas.
-     */
     private fun updateGroupsOfNews(filteredNews: List<NewsBean>) {
-        val newsGroups = filteredNews.groupBy { it.group ?: -1 }
-            .filter { it.key >= 0 } // Filtrar grupos inválidos
-
+        val newsGroups = filteredNews.groupBy { it.group ?: -1 }.filter { it.key >= 0 }
         groupsOfNews.clear()
         groupsOfNews.putAll(newsGroups)
     }
 
-    /**
-     * Formatea y agrupa las noticias para su visualización.
-     */
-    private fun formatAndGroupNews(newsItems: List<NewsBean>): List<List<NewsBean>> {
-        return filterGroupedNews(newsItems)
-    }
+    fun getRelatedNews(from: NewsBean): List<NewsBean> = groupsOfNews[from.group] ?: emptyList()
 
-    /**
-     * Obtiene noticias relacionadas para una noticia específica.
-     *
-     * @param from La noticia para la que queremos encontrar noticias relacionadas.
-     * @return Una lista de noticias relacionadas con el mismo grupo.
-     */
-    fun getRelatedNews(from: NewsBean): List<NewsBean> {
-        return groupsOfNews[from.group] ?: emptyList()
-    }
+    // === Public API - Firestore Operations ===
 
-    /**
-     * Obtiene noticias neutrales desde Firestore.
-     *
-     * Esta función recupera todas las noticias neutrales desde la colección de Firestore,
-     * registra el proceso y envía los mensajes y resultados apropiados.
-     *
-     * @param filterData Datos de filtro local opcionales para personalizar las noticias.
-     */
-    internal suspend fun fetchNeutralNewsFromFirestoreSuspend(
-        filterData: LocalFilterBean
-    ): Boolean {
+    internal suspend fun fetchNeutralNewsFromFirestoreSuspend(filterData: LocalFilterBean): Boolean {
         return suspendCoroutine { continuation ->
             fetchNeutralNewsFromFirestore(filterData, continuation)
         }
     }
 
-    /**
-     * Obtiene noticias neutrales desde Firestore.
-     *
-     * Esta función recupera todas las noticias neutrales desde la colección de Firestore,
-     * registra el proceso y envía los mensajes y resultados apropiados.
-     */
-
-    fun fetchNeutralNewsFromFirestore(
-        filterData: LocalFilterBean,
-        continuation: Continuation<Boolean>? = null
-    ) {
-        if (allNeutralNews.isNotEmpty()) {
-            Log.d("TodayFragmentVM", "Ya hay noticias neutrales cargadas, usando caché")
-            messageEvent.postValue("Usando noticias neutrales en caché")
-        }
-
-        currentFilterData = filterData
-
-        val db = FirebaseFirestore.getInstance()
-        db.collection(NEUTRAL_NEWS).get().addOnSuccessListener { snapshot ->
-            if (snapshot != null && !snapshot.isEmpty) {
-                Log.d(
-                    "fetchNeutralNewsFromFirestore",
-                    "Tamaño del snapshot: ${snapshot.size()}"
-                )
-                val fetchedNeutralNews = snapshot.documents.mapNotNull { doc ->
-                    val data = doc.data
-                    try {
-                        if (data == null) {
-                            Log.e("fetchNeutralNewsFromFirestore", "Data is null for document: ${doc.id}")
-                            return@mapNotNull null
-                        }
-                        if (doc == null) {
-                            Log.e("fetchNeutralNewsFromFirestore", "Document is null")
-                        }
-                        val result = processNeutralNewDocument(data,doc.id)
-                        if (result == null) {
-                            return@mapNotNull null
-                        }
-                        result
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        Log.e(
-                            "fetchNeutralNewsFromFirestore",
-                            "Error al analizar el documento: ${e.localizedMessage}"
-                        )
-                        null
-                    }
-                }
-
-                // Guardar la lista completa en el helper y preparar la vista inicial (subconjunto)
-                val sortedAll = fetchedNeutralNews.sortedByDescending { it.date ?: "" }
-                paginationHelper.setCachedNeutralAll(sortedAll)
-                paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
-
-                // Inicializar listas mostradas usando helper (evita duplicados)
-                allNeutralNews = mutableListOf()
-                val (initialReg, initialNeu) = paginationHelper.prepareInitialDisplay(mutableListOf(), allNeutralNews)
-                if (initialNeu.isNotEmpty()) allNeutralNews.addAll(initialNeu)
-
-                dataLoaded = true
-
-                Log.d(
-                    "fetchNeutralNewsFromFirestore",
-                    "Cantidad de noticias neutrales (total en helper): ${sortedAll.size}, mostradas: ${allNeutralNews.size}"
-                )
-                messageEvent.postValue("Noticias neutrales obtenidas con éxito. Total: ${sortedAll.size}")
-
-                // Guardar en caché local con el timestamp original
-                saveNeutralNewsToLocalCache(fetchedNeutralNews)
-             } else {
-                 messageEvent.postValue("No se encontraron noticias neutrales en Firestore")
-                 Log.w(
-                     "fetchNeutralNewsFromFirestore",
-                     "No se encontraron noticias neutrales en Firestore"
-                 )
-                 // Solo mostrar "No hay resultados" si no hay consulta de búsqueda (mostrando estado vacío)
-                 Log.d("TodayFragmentVM", "Mostrando mensaje 'No hay resultados': ${searchQuery.value.isNullOrEmpty()}")
-                 showNoResults.postValue(searchQuery.value.isNullOrEmpty())
-             }
-         }.addOnSuccessListener {
-             continuation?.resume(true)
-         }.addOnFailureListener { e ->
-             continuation?.resume(false)
-             messageEvent.postValue("Error al obtener noticias neutrales: ${e.localizedMessage}")
-             Log.e(
-                 "fetchNeutralNewsFromFirestore",
-                 "Error al obtener noticias neutrales: ${e.localizedMessage}"
-             )
-         }
-     }
-
-    /**
-     * Obtiene datos de noticias desde Firestore.
-     *
-     * Esta función recupera todas las noticias desde la colección de Firestore,
-     * registra el proceso y envía los mensajes y resultados apropiados.
-     *
-     * @param filterData Datos de filtro local opcionales para personalizar las noticias.
-     */
-
-    internal suspend fun fetchNewsFromFirestoreSuspend(
-        filterData: LocalFilterBean
-    ): Boolean {
-        return suspendCoroutine { continuation ->
-            fetchNewsFromFirestore(filterData, continuation)
-        }
-    }
-
-    fun fetchNewsFromFirestore(
-        filterData: LocalFilterBean,
-        continuation: Continuation<Boolean>? = null
-    ) {
-        val startTime = System.currentTimeMillis()
-        Log.d("TodayFragmentVM", "Iniciando consulta a Firestore")
-
+    fun fetchNeutralNewsFromFirestore(filterData: LocalFilterBean, continuation: Continuation<Boolean>? = null) {
         if (allNews.isNotEmpty()) {
-            Log.d("TodayFragmentVM", "Ya hay noticias cargadas, usando caché")
             messageEvent.postValue("Usando noticias en caché")
+            continuation?.resume(true)
             return
         }
 
-
-        isFirestoreLoading = true
-
-        // Guardar los datos de filtro
         currentFilterData = filterData
 
-        val db = FirebaseFirestore.getInstance()
-        db.collection(NEWS)
-            .whereGreaterThan(GROUP, 0)
-            .whereNotEqualTo(DESCRIPTION, "")
-            .orderBy(GROUP, Query.Direction.DESCENDING)
-            .get()
+        FirebaseFirestore.getInstance().collection(NEUTRAL_NEWS).get()
             .addOnSuccessListener { snapshot ->
-                val endTime = System.currentTimeMillis()
-                val elapsedTime = endTime - startTime
-                Log.d("TodayFragmentVM", "Consulta completada en $elapsedTime ms")
-
                 if (snapshot != null && !snapshot.isEmpty) {
-                    Log.d("TodayFragmentVM", "Snapshot size: ${snapshot.size()}")
-                    val fetchedNews = snapshot.documents.mapNotNull { doc ->
-                        val data = doc.data
-                        try {
-                            if (data == null) {
-                                Log.e("TodayFragmentVM", "Data is null for document: ${doc.id}")
-                                return@mapNotNull null
-                            }
-                            val result = processNewDocument(data, doc.id)
-                            if (result == null) {
-                                return@mapNotNull null
-                            }
-                            result
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            Log.e("TodayFragmentVM", "Error parsing document: ${e.localizedMessage}")
-                            null
-                        }
+                    val fetchedNeutralNews = snapshot.documents.mapNotNull { doc ->
+                        FirestoreDataMapper.mapNeutralNewsDocument(doc.data, doc.id)
                     }
 
-                    // Guardar la lista completa en el helper y preparar la vista inicial (subconjunto)
-                    val sortedAll = fetchedNews.sortedByDescending { it.pubDate ?: "" }
-                    paginationHelper.setCachedRegularAll(sortedAll)
+                    val sortedAll = fetchedNeutralNews.sortedByDescending { it.date ?: "" }
+                    paginationHelper.setCachedNeutralAll(sortedAll)
                     paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
 
-                    // Inicializar listas mostradas usando helper (evita duplicados)
-                    allNews = mutableListOf()
-                    val (initialReg, initialNeu) = paginationHelper.prepareInitialDisplay(allNews, mutableListOf())
-                    if (initialReg.isNotEmpty()) allNews.addAll(initialReg)
+                    allNeutralNews = mutableListOf()
+                    val initialNeu = paginationHelper.prepareInitialDisplay(allNeutralNews)
+                    if (initialNeu.isNotEmpty()) allNeutralNews.addAll(initialNeu)
 
-                    Log.d("TodayFragmentVM", "Fetched news count (helper): ${sortedAll.size}, mostradas: ${allNews.size}")
-                    messageEvent.postValue("News fetched successfully. Total: ${sortedAll.size}")
-                    // Guardar en caché local
-                    saveNewsToLocalCache(fetchedNews)
-                 } else {
-                     messageEvent.postValue("No news found in Firestore")
-                     Log.w("TodayFragmentVM", "No news found in Firestore")
-                 }
-                 isFirestoreLoading = false
-             }
-             .addOnSuccessListener {
-                 continuation?.resume(true)
-             }
-             .addOnFailureListener { e ->
-                 val endTime = System.currentTimeMillis()
-                 val elapsedTime = endTime - startTime
-                 Log.e("TIMER", "Consulta falló después de $elapsedTime ms: ${e.localizedMessage}")
-
-                 continuation?.resume(false)
-                 messageEvent.postValue("Error fetching news: ${e.localizedMessage}")
-                 Log.e("TodayFragmentVM", "Error fetching news: ${e.localizedMessage}")
-                 isFirestoreLoading = false
-             }
-     }
-    /**
-     * Agrupa los elementos de noticias obtenidos según su número de grupo y medio de origen.
-     *
-     * La función asegura que solo se consideren grupos con más de un elemento,
-     * y para cada fuente en un grupo se selecciona la noticia más reciente.
-     *
-     * @param fetchedNews La lista de elementos de noticias obtenidos de Firestore.
-     * @return Una lista de elementos de noticias agrupados.
-     */
-    private fun filterGroupedNews(fetchedNews: List<NewsBean>): List<List<NewsBean>> {
-        // Step 1: Filter out news with a valid non-null, non-negative group ID
-        val validNews = fetchedNews.filter { it.group != null && it.group >= 0 }
-
-        // Step 2: Group news by their group ID
-        val groupedNews = validNews.groupBy { it.group }
-
-        // Step 3: Keep only groups with more than one item
-        val nonSingletonGroups = groupedNews.filter { (_, newsList) -> newsList.size > 1 }
-
-        // Step 4: For each group, keep only the most recent news per source
-        val mostRecentPerSourcePerGroup = nonSingletonGroups.mapValues { (_, newsList) ->
-            newsList.groupBy { it.sourceMedium }.mapValues { (_, sourceNewsList) ->
-                    sourceNewsList.maxByOrNull {
-                        getDateForSorting(it.date)?.time ?: Long.MIN_VALUE
-                    }!!
-            }.values.sortedByDescending {
-                getDateForSorting(it.date)?.time ?: Long.MIN_VALUE
+                    dataLoaded = true
+                    messageEvent.postValue("Noticias neutrales obtenidas con éxito. Total: ${sortedAll.size}")
+                    saveNeutralNewsToLocalCache(fetchedNeutralNews)
+                    continuation?.resume(true)
+                } else {
+                    messageEvent.postValue("No se encontraron noticias neutrales en Firestore")
+                    showNoResults.postValue(searchQuery.value.isNullOrEmpty())
+                    continuation?.resume(true)
                 }
-        }
-
-        // Step 5: Sort all groups by the most recent news item inside each group
-        val sortedGroups = mostRecentPerSourcePerGroup.values.sortedByDescending { group ->
-                getDateForSorting(group.firstOrNull()?.date)?.time ?: Long.MIN_VALUE
             }
-
-        // Step 6: Format date for display
-        return sortedGroups.map { group ->
-            group.map { news ->
-                news.copy(pubDate = formatDateToSpanish(news.pubDate))
+            .addOnFailureListener { e ->
+                messageEvent.postValue("Error al obtener noticias neutrales: ${e.localizedMessage}")
+                continuation?.resume(false)
             }
+    }
+
+    internal suspend fun fetchNewsByGroupSuspend(groupId: Int, filterData: LocalFilterBean): Boolean {
+        return suspendCoroutine { continuation ->
+            fetchNewsByGroup(groupId, filterData, continuation)
         }
     }
 
-    /**
-     * Aplica el filtro de categoría a las noticias neutrales.
-     *
-     * @return True si el filtro de categoría se aplica, false en caso contrario.
-     */
-    private fun applyCategoryNeutralFilter(
-        filterData: LocalFilterBean, newsItem: NeutralNewsBean
-    ): Boolean {
-        if (filterData.categoryTagBean.isNullOrEmpty()) return true
-        return filterData.categoryTagBean?.any {
-            it.name == newsItem.category
-        } != false
-    }
+    fun fetchNewsByGroup(groupId: Int, filterData: LocalFilterBean, continuation: Continuation<Boolean>? = null) {
+        currentFilterData = filterData
 
-    /**
-     * Formatea una fecha en formato español.
-     *
-     * @param value Cualquier objeto que represente una fecha (Timestamp, Date, String, Long)
-     * @return Cadena de fecha formateada o null si no se puede formatear.
-     */
-    private val dateFormatCache = ConcurrentHashMap<String, String?>()
-
-    // Función optimizada de formateo de fechas
-    private fun formatDateToSpanish(value: Any?): String? {
-        if (value == null) return null
-
-        // Si es String y está en caché, devolver directamente
-        if (value is String && dateFormatCache.containsKey(value)) {
-            return dateFormatCache[value]
-        }
-
-        // Formato solamente cuando es necesario
-        val outputFormat = SimpleDateFormat(DATE_FORMAT, Locale("es", "ES"))
-        val date: Date? = when (value) {
-            is Timestamp -> value.toDate()
-            is Date -> value
-            is String -> parseStringDate(value)
-            is Long -> Date(value)
-            else -> null
-        }
-
-        val result = date?.let { outputFormat.format(it).uppercase() }
-
-        // Guardar en caché si es una cadena
-        if (value is String && result != null) {
-            dateFormatCache[value] = result
-        }
-
-        return result
-    }
-
-    /**
-     * Helper function to parse date strings in various formats
-     */
-    private fun parseStringDate(dateString: String): Date? {
-        // Priorizar formatos españoles ya que es lo que más usamos
-        val inputFormats = listOf(
-            SimpleDateFormat(DATE_FORMAT, Locale("es", "ES")),
-            SimpleDateFormat("dd/MM/yyyy", Locale("es", "ES")),
-        )
-
-        for (format in inputFormats) {
-            try {
-                val parsedDate = format.parse(dateString)
-                if (parsedDate != null) {
-                    return parsedDate
-                }
-            } catch (_: ParseException) {
-                // Intentar con el siguiente formato
-            }
-        }
-
-        Log.e("DateDebug", "No se pudo parsear la fecha: '$dateString'")
-        return null
-    }
-
-    /**
-     * Convierte una cadena de fecha a un objeto Date para comparaciones.
-     * Maneja múltiples formatos y asigna el año actual cuando no está presente.
-     */
-    private fun getDateForSorting(dateString: String?): Date? {
-        if (dateString.isNullOrEmpty()) return null
-
-        // Obtener año actual para usarlo cuando no se especifica
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-
-        // Intentar con múltiples formatos
-        val formats = listOf(
-            DATE_FORMAT,
-            // settings.dateFormat
-        )
-
-        for (format in formats) {
-            try {
-                val sdf = SimpleDateFormat(format, Locale("es", "ES"))
-                val date = sdf.parse(dateString)
-
-                if (format == DATE_FORMAT) {
-                    val calendar = Calendar.getInstance()
-                    if (date != null) {
-                        calendar.time = date
+        FirebaseFirestore.getInstance().collection(NEWS)
+            .whereEqualTo(GROUP, groupId)
+            .whereNotEqualTo(DESCRIPTION, "")
+            .get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val fetchedNews = snapshot.documents.mapNotNull { doc ->
+                        FirestoreDataMapper.mapNewsDocument(doc.data ?: return@mapNotNull null, doc.id)
                     }
-                    calendar.set(Calendar.YEAR, currentYear)
-                    return calendar.time
+
+                    if (fetchedNews.isNotEmpty()) {
+                        val others = allNews.filter { it.group != groupId }
+                        allNews = mutableListOf()
+                        allNews.addAll(others)
+                        allNews.addAll(fetchedNews)
+
+                        paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
+
+                        updateGroupsOfNews(allNews)
+                        newsList.postValue(NewsSorter.filterGroupedNews(allNews))
+                        saveNewsToLocalCache(fetchedNews)
+
+                        messageEvent.postValue("Noticias del grupo $groupId cargadas: ${fetchedNews.size}")
+                    }
                 }
-
-                return date
-            } catch (_: Exception) {
-                // Intentar con el siguiente formato
-                continue
+                continuation?.resume(true)
             }
-        }
-
-        return null
+            .addOnFailureListener { e ->
+                messageEvent.postValue("Error al obtener noticias del grupo $groupId: ${e.localizedMessage}")
+                continuation?.resume(false)
+            }
     }
 
     fun updateSortType(sortType: TodaySortType) {
@@ -1840,3 +770,4 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         applyFiltersAndSearch(force = true)
     }
 }
+

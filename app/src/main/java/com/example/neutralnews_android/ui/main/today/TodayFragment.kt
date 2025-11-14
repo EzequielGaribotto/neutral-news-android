@@ -33,7 +33,6 @@ import com.example.neutralnews_android.BR
 import com.example.neutralnews_android.R
 import com.example.neutralnews_android.data.Constants.ApiObject.FILTER_COUNT
 import com.example.neutralnews_android.data.Constants.ApiObject.FILTER_DATA
-import com.example.neutralnews_android.data.Constants.DateFormat.DATE_FORMAT
 import com.example.neutralnews_android.data.bean.filter.LocalFilterBean
 import com.example.neutralnews_android.data.bean.news.NewsBean
 import com.example.neutralnews_android.data.bean.settings.SettingsBean
@@ -44,16 +43,14 @@ import com.example.neutralnews_android.di.view.AppFragment
 import com.example.neutralnews_android.ui.main.filter.FilterActivity
 import com.example.neutralnews_android.ui.main.news.NewDetailActivity
 import com.example.neutralnews_android.util.loggerE
-import com.example.neutralnews_android.util.preferences.Prefs
 import com.google.common.reflect.TypeToken
 import com.google.gson.Gson
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
-import kotlin.text.category
 
 
 /**
@@ -79,7 +76,7 @@ class TodayFragment : AppFragment() {
     // Variable para mantener el filtro de fecha actual
     private var currentDateFilter: DateFilterType = DateFilterType.ALL
     // Mapa para almacenar las fechas de los días de la semana pasados
-    private val pastDays = mutableMapOf<String, Date>()
+    private var pastDays = mutableMapOf<String, Date>()
 
     // Conjunto para almacenar las fechas seleccionadas por el usuario
     private val selectedDates = mutableSetOf<String>()
@@ -98,29 +95,8 @@ class TodayFragment : AppFragment() {
         setupUI()
         setupObservers()
         updateFilterButtonVisibility()
-        calculatePastDays() // Calcular fechas para el filtro
+        pastDays = vm.calculatePastDays(pastDays) as MutableMap<String, Date> // Calcular fechas para el filtro
         return binding.root
-    }
-
-    // Función para calcular y almacenar las fechas de los últimos 7 días
-    private fun calculatePastDays() {
-        val calendar = Calendar.getInstance()
-        val today = calendar.time
-
-        // Guardar fecha de hoy
-        pastDays["Hoy"] = today
-
-        // Retroceder un día para ayer
-        calendar.add(Calendar.DAY_OF_YEAR, -1)
-        pastDays["Ayer"] = calendar.time
-
-        // Guardar los últimos 5 días con nombres de día
-        val dayFormat = SimpleDateFormat("EEEE", Locale("es", "ES"))
-        for (i in 2..6) {
-            calendar.add(Calendar.DAY_OF_YEAR, -1)
-            val dayName = dayFormat.format(calendar.time).capitalize(Locale.ROOT)
-            pastDays[dayName] = calendar.time
-        }
     }
 
     /**
@@ -138,26 +114,20 @@ class TodayFragment : AppFragment() {
         isDateDialogOpen = true
 
         val dlg = DateFilterDialogFragment.newInstance(
-            (filterData.selectedDates ?: emptyList()).map { it.time }.toLongArray()
+            vm.getSelectedDatesMillis()
         )
         dlg.onApply = { selectedList ->
-            if (selectedList.isEmpty()) {
-                filterData.selectedDates = null
-                currentDateFilter = DateFilterType.ALL
-                selectedDates.clear()
-                Prefs.remove("selected_dates")
+            // Delegate persistence and filter application to ViewModel
+            vm.onDateFilterApplied(selectedList)
+            // Update UI state
+            val formatted = vm.getSelectedDatesFormatted()
+            if (formatted.isNotEmpty()) {
+                binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
             } else {
-                // persist selection as set of strings (millis)
-                val millisSet = selectedList.map { it.time.toString() }.toSet()
-                Prefs.putStringSet("selected_dates", millisSet)
-
-                filterData.selectedDates = selectedList
-                currentDateFilter = DateFilterType.MULTI_SELECT
-                selectedDates.clear()
-                val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
-                for (d in selectedList) selectedDates.add(fmt.format(d))
+                binding.imgDateFilter.clearColorFilter()
             }
-            applyDateFilter()
+            // Notify fragment-level data if needed
+            currentDateFilter = if (formatted.isEmpty()) DateFilterType.ALL else DateFilterType.MULTI_SELECT
         }
         dlg.show(parentFragmentManager, DATE_FILTER_DIALOG_TAG)
     }
@@ -166,40 +136,8 @@ class TodayFragment : AppFragment() {
      * Aplica el filtro de fecha seleccionado a las noticias.
      */
     private fun applyDateFilter() {
-        when (currentDateFilter) {
-            DateFilterType.ALL -> {
-                filterData.dateFilter = null
-                filterData.selectedDates = null
-                filterData.isOlderThan = false
-            }
-
-            DateFilterType.MULTI_SELECT -> {
-                // If filterData.selectedDates was already set by the dialog, keep it.
-                // Otherwise, if there are selectedDates strings (legacy), try to map them to dates.
-                if (filterData.selectedDates == null || filterData.selectedDates!!.isEmpty()) {
-                    if (selectedDates.isNotEmpty()) {
-                        val selectedDatesList = selectedDates.mapNotNull { pastDays[it] }
-                        filterData.selectedDates = selectedDatesList
-                    } else {
-                        filterData.selectedDates = null
-                    }
-                }
-                filterData.isOlderThan = false
-            }
-        }
-
-        // Actualizar la UI para reflejar las fechas seleccionadas
-        val selectedCount = filterData.selectedDates?.size ?: selectedDates.size
-        if (selectedCount > 0) {
-            binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
-            // start progressive DB load for selected dates
-            vm.loadForSelectedDates()
-        } else {
-            binding.imgDateFilter.clearColorFilter()
-        }
-
-        vm.updateFilterData(filterData)
-        vm.applyFilters(filterData)
+        // The ViewModel manages filter data; ask it to reapply current filters.
+        vm.reapplyFilters()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -219,12 +157,14 @@ class TodayFragment : AppFragment() {
             if (applied) {
                 val arr = bundle.getLongArray("dates") ?: longArrayOf()
                 val dates = arr.map { Date(it) }
-                filterData.selectedDates = dates
+                // Delegate to VM for persistence and applying the selection
+                vm.onDateFilterApplied(dates)
                 currentDateFilter = DateFilterType.MULTI_SELECT
                 selectedDates.clear()
                 val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
                 for (d in dates) selectedDates.add(fmt.format(d))
-                applyDateFilter()
+                // update UI color
+                if (dates.isNotEmpty()) binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
             }
             // liberar el flag para permitir abrir otro diálogo
             isDateDialogOpen = false
@@ -232,16 +172,13 @@ class TodayFragment : AppFragment() {
 
         // Restaurar selección persistida (si existe)
         try {
-            val saved = Prefs.getStringSet("selected_dates", null)
-            if (saved != null && saved.isNotEmpty()) {
-                val arr = saved.mapNotNull { it?.toLongOrNull() }
-                val dates = arr.map { Date(it) }
-                filterData.selectedDates = dates
+            val restored = vm.restoreSelectedDatesFromPrefs()
+            if (restored.isNotEmpty()) {
                 currentDateFilter = DateFilterType.MULTI_SELECT
                 selectedDates.clear()
                 val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
-                for (d in dates) selectedDates.add(fmt.format(d))
-                applyDateFilter()
+                for (d in restored) selectedDates.add(fmt.format(d))
+                binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
             }
         } catch (ignored: Exception) {
         }
@@ -666,21 +603,8 @@ class TodayFragment : AppFragment() {
                 )
             }
 
-            newsAdapter.list = if (isSearchActive) {
-                newsItems
-            } else {
-                // Aplicar orden localmente según currentSortType para evitar reinvocar al ViewModel
-                when (currentSortType) {
-                    TodaySortType.DATE_DESC -> newsItems.sortedByDescending { parseDateToTimestamp(it.date) }
-                    TodaySortType.DATE_ASC -> newsItems.sortedBy { parseDateToTimestamp(it.date) }
-                    TodaySortType.UPDATED_AT_DESC -> newsItems.sortedByDescending { parseDateToTimestamp(it.updatedAt) }
-                    TodaySortType.UPDATED_AT_ASC -> newsItems.sortedBy { parseDateToTimestamp(it.updatedAt) }
-                    TodaySortType.RELEVANCE_DESC -> newsItems.sortedByDescending { it.relevance ?: 0.0 }
-                    TodaySortType.RELEVANCE_ASC -> newsItems.sortedBy { it.relevance ?: 0.0 }
-                    TodaySortType.SOURCES_DESC -> newsItems.sortedByDescending { it.sourceIds?.size ?: 0 }
-                    TodaySortType.SOURCES_ASC -> newsItems.sortedBy { it.sourceIds?.size ?: 0 }
-                }
-            }
+            // El ViewModel ya maneja la ordenación, solo asignamos la lista
+            newsAdapter.list = newsItems
             newsAdapter.notifyDataSetChanged()
 
             if (!isSearchActive && newsItems.isEmpty()) {
@@ -691,28 +615,7 @@ class TodayFragment : AppFragment() {
     }
 
     private fun parseDateToTimestamp(dateString: String?): Long {
-        if (dateString.isNullOrEmpty()) return 0L
-
-        // Intentar con múltiples formatos posibles
-        val formats = listOf(
-            DATE_FORMAT,
-            "yyyy-MM-dd'T'HH:mm:ssX",
-            "EEE, dd MMMM 'de' yyyy HH:mm:ss.SSS",
-            // Agregar aquí todos los formatos posibles, incluyendo el nuevo formato
-            settings.dateFormat // Formato configurado por el usuario
-        )
-
-        for (format in formats) {
-            try {
-                val sdf = SimpleDateFormat(format, Locale("es", "ES"))
-                sdf.timeZone = TimeZone.getTimeZone("UTC")
-                return sdf.parse(dateString)?.time ?: 0L
-            } catch (e: Exception) {
-                // Intentar con el siguiente formato
-            }
-        }
-
-        return 0L
+        return vm.parseDateToTimestamp(dateString)
     }
     private fun observeClickEvents() {
         vm.obrClick.observe(viewLifecycleOwner) { view ->
@@ -770,61 +673,53 @@ class TodayFragment : AppFragment() {
      * Creates and configures the news adapter with item click handling.
      */
     private fun createNewsAdapter(): SimpleRecyclerViewAdapter<NewsBean, RowNewsBinding> {
-        return SimpleRecyclerViewAdapter<NewsBean, RowNewsBinding>(
+        return SimpleRecyclerViewAdapter(
             R.layout.row_news,
             BR.newsBean,
             object : SimpleRecyclerViewAdapter.SimpleCallback<NewsBean, RowNewsBinding> {
                 override fun onItemClick(v: View, m: NewsBean) {
                     when (v.id) {
                         R.id.clNews -> {
-                            // Animación de pulsación
-                            v.animate()
-                                .scaleX(0.95f)
-                                .scaleY(0.95f)
-                                .setDuration(50)
-                                .withEndAction {
-                                    // Animación de rebote al volver
-                                    v.animate()
-                                        .scaleX(1.0f)
-                                        .scaleY(1.0f)
-                                        .setDuration(50)
-                                        .withEndAction {
-                                            var relatedNews = vm.getRelatedNews(m)
-                                            var sizeMb = checkExtraSize(relatedNews)
-                                            while (sizeMb > 0.25 && relatedNews.isNotEmpty()) {
-                                                // Elimina la noticia con peor neutralidad
-                                                relatedNews = relatedNews
-                                                    .sortedBy { it.neutralScore }
-                                                    .drop(1)
-                                                sizeMb = checkExtraSize(relatedNews)
-                                                Log.d("ExtraSizeCheck", "relatedNews recortado a %.2f MB".format(sizeMb))
-                                            }
+                            // Animación de pulsación simple
+                            v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(50).withEndAction {
+                                v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(50).start()
 
-                                            Log.d("ExtraSizeCheck", "relatedNews final size: %.2f MB".format(sizeMb))
-                                            Log.d("ExtraSizeCheck", "m final size: %.2f MB".format(checkExtraSize(m)))
-                                            Log.d("ExtraSizeCheck", "relatedNews size: %.2f MB".format(checkExtraSize(relatedNews)))
-                                            Log.d("ExtraSizeCheck", "settings size: %.2f MB".format(checkExtraSize(settings)))
-                                            Log.d("ExtraSizeCheck", "total size: %.2f MB".format(
-                                                checkExtraSize(m) + checkExtraSize(relatedNews) + checkExtraSize(settings)
-                                            ))
-                                            startNewActivity(
-                                                NewDetailActivity.newIntent(
-                                                    requireContext(),
-                                                    0,
-                                                    m,
-                                                    relatedNews,
-                                                    settings
-                                                )
-                                            )
-                                            // Agregar animación de transición
-                                            requireActivity().overridePendingTransition(
-                                                R.anim.slide_in_right,
-                                                R.anim.slide_out_left
-                                            )
+                                // Cargar noticias del grupo y abrir detalle en background
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    // Mostrar loader
+                                    binding.swRefresh.isRefreshing = true
+                                    try {
+                                        val groupId = m.group ?: -1
+                                        if (groupId > 0) {
+                                            vm.fetchNewsByGroupSuspend(groupId, filterData)
                                         }
-                                        .start()
+                                    } catch (e: Exception) {
+                                        Log.e("TodayFragment", "Error cargando noticias por grupo: ${e.localizedMessage}")
+                                    } finally {
+                                        binding.swRefresh.isRefreshing = false
+                                    }
+
+                                    // Obtener noticias relacionadas (puede haber sido actualizada por VM)
+                                    val updatedRelated = vm.getRelatedNews(m)
+
+                                    // Abrir actividad de detalle
+                                    startNewActivity(
+                                        NewDetailActivity.newIntent(
+                                            requireContext(),
+                                            0,
+                                            m,
+                                            updatedRelated,
+                                            settings
+                                        )
+                                    )
+
+                                    // Animación de transición
+                                    try {
+                                        requireActivity().overridePendingTransition(R.anim.slide_in_right, R.anim.slide_out_left)
+                                    } catch (_: Exception) { }
                                 }
-                                .start()
+
+                            }.start()
                         }
                     }
                 }
@@ -841,12 +736,7 @@ class TodayFragment : AppFragment() {
             }
         )
     }
-    private fun checkExtraSize(obj: Any): Double {
-        val json = Gson().toJson(obj)
-        val bytes = json.toByteArray(Charsets.UTF_8)
-        val mb = bytes.size.toDouble() / (1024 * 1024)
-        return mb
-    }
+
     /**
      * Configures the RecyclerView with layout manager and adapter.
      */
@@ -860,7 +750,6 @@ class TodayFragment : AppFragment() {
     /**
      * Sets up scroll listener to hide keyboard when scrolling.
      */
-    private var isScrollListenerProcessing = false
 
     private fun setupScrollListener() {
         binding.rvTodayNews.addOnScrollListener(object : RecyclerView.OnScrollListener() {
