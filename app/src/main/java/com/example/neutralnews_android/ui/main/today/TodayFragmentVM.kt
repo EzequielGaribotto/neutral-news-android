@@ -83,7 +83,8 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
     /**
      * Función común para cargar noticias de fechas específicas.
-     * Carga TODAS en memoria, muestra las primeras N visualmente.
+     * PASO 1: Carga PRIMERAS 10 y las muestra en UI
+     * PASO 2: Carga el RESTO en background sin actualizar UI
      */
     private fun loadNewsForDates(selectedList: List<Date>, isInitialLoad: Boolean) {
         viewModelScope.launch {
@@ -113,7 +114,7 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     Pair(from, to)
                 }
 
-                // PASO 1: Cargar TODAS del caché primero
+                // PASO 1: Intentar cargar primeras 10 del caché
                 val cachedNews = dateRanges.flatMap { (from, to) ->
                     neutralDaoLocal.getNewsBetween(from, to).map { entity ->
                         NeutralNewsBean(
@@ -133,30 +134,41 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                 }
 
                 if (cachedNews.isNotEmpty()) {
-                    Log.d("TodayFragmentVM", "TODAS las noticias de fechas desde caché: ${cachedNews.size}")
+                    Log.d("TodayFragmentVM", "Noticias del caché: ${cachedNews.size}")
 
-                    // PASO 2: Ordenar TODAS y configurar paginación
+                    // PASO 2: Ordenar y tomar primeras 10
                     val sortedAll = NewsSorter.sortNeutralNews(cachedNews, currentSortType.value ?: TodaySortType.DATE_DESC)
-                    paginationHelper.setCachedNeutralAll(sortedAll)
+                    val first10 = sortedAll.take(10)
 
-                    // PASO 3: Mostrar SOLO las primeras 10 visualmente
+                    // PASO 3: Configurar helper con las primeras 10
+                    paginationHelper.setCachedNeutralAll(first10)
                     allNeutralNews.clear()
-                    val initial = paginationHelper.prepareInitialDisplay(allNeutralNews)
-                    if (initial.isNotEmpty()) {
-                        allNeutralNews.addAll(initial)
-                    }
+                    allNeutralNews.addAll(first10)
 
-                    Log.d("TodayFragmentVM", "Mostrando primeras ${allNeutralNews.size} de ${sortedAll.size} visualmente")
+                    Log.d("TodayFragmentVM", "Mostrando PRIMERAS ${first10.size} noticias en UI")
 
-                    // PASO 4: Actualizar UI inmediatamente
+                    // PASO 4: Actualizar UI INMEDIATAMENTE con las primeras 10
                     withContext(Dispatchers.Main) {
                         applyFiltersAndSearch(force = true)
                         isLoading.postValue(false)
                     }
 
-                    // PASO 5: Verificar actualizaciones en segundo plano
+                    // PASO 5: Cargar el RESTO en background SIN actualizar UI
+                    if (sortedAll.size > 10) {
+                        launch {
+                            Log.d("TodayFragmentVM", "Cargando ${sortedAll.size - 10} noticias restantes en background...")
+
+                            // Actualizar helper con TODAS (incluye las primeras 10)
+                            paginationHelper.setCachedNeutralAll(sortedAll)
+
+                            Log.d("TodayFragmentVM", "Background: ${sortedAll.size} noticias totales disponibles para paginación")
+                            // NO actualizar UI aquí - solo cuando el usuario pagine
+                        }
+                    }
+
+                    // PASO 6: Verificar actualizaciones en Firestore (sin bloquear)
                     launch {
-                        val updatedNews = dataManager.fetchNeutralNewsForDates(selectedList)
+                        val updatedNews = dataManager.fetchAllNeutralNewsForDates(selectedList)
                         if (updatedNews.isNotEmpty()) {
                             dataManager.saveNeutralNewsToCache(updatedNews)
 
@@ -164,49 +176,59 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                             val sortedCombined = NewsSorter.sortNeutralNews(combined, currentSortType.value ?: TodaySortType.DATE_DESC)
                             paginationHelper.setCachedNeutralAll(sortedCombined)
 
-                            Log.d("TodayFragmentVM", "Actualizadas noticias en background: ahora ${sortedCombined.size} totales")
+                            Log.d("TodayFragmentVM", "Actualizadas desde Firestore: ahora ${sortedCombined.size} totales")
                         }
                     }
 
-                    // PASO 6: Cargar noticias relacionadas si es carga inicial
+                    // PASO 7: Si es carga inicial, cargar relacionadas
                     if (isInitialLoad) {
                         loadCachedRelatedNews()
                         refreshNeutralNews()
                     }
                 } else {
-                    // PASO 1: Sin caché, cargar TODAS desde Firestore
-                    Log.d("TodayFragmentVM", "Sin caché, cargando TODAS desde Firestore...")
+                    // Sin caché: PASO 1 - Cargar PRIMERAS 10 desde Firestore
+                    Log.d("TodayFragmentVM", "Sin caché, cargando PRIMERAS 10 desde Firestore...")
 
-                    val fetchedNews = dataManager.fetchNeutralNewsForDates(selectedList)
+                    val first10 = dataManager.fetchFirstNeutralNewsForDates(selectedList, limit = 10)
 
-                    if (fetchedNews.isNotEmpty()) {
-                        Log.d("TodayFragmentVM", "Cargadas TODAS las noticias: ${fetchedNews.size}")
+                    if (first10.isNotEmpty()) {
+                        Log.d("TodayFragmentVM", "Primeras ${first10.size} noticias cargadas desde Firestore")
 
-                        // PASO 2: Ordenar TODAS
-                        val sortedAll = NewsSorter.sortNeutralNews(fetchedNews, currentSortType.value ?: TodaySortType.DATE_DESC)
-                        paginationHelper.setCachedNeutralAll(sortedAll)
-
-                        // PASO 3: Mostrar SOLO las primeras 10 visualmente
+                        // PASO 2: Configurar helper con las primeras 10
+                        paginationHelper.setCachedNeutralAll(first10)
                         allNeutralNews.clear()
-                        val initial = paginationHelper.prepareInitialDisplay(allNeutralNews)
-                        if (initial.isNotEmpty()) {
-                            allNeutralNews.addAll(initial)
-                        }
+                        allNeutralNews.addAll(first10)
 
-                        Log.d("TodayFragmentVM", "Mostrando primeras ${allNeutralNews.size} de ${sortedAll.size} totales")
+                        Log.d("TodayFragmentVM", "Mostrando PRIMERAS ${first10.size} noticias en UI")
 
-                        // PASO 4: Guardar TODAS en caché en segundo plano
-                        launch {
-                            dataManager.saveNeutralNewsToCache(fetchedNews)
-                        }
-
-                        // PASO 5: Actualizar UI
+                        // PASO 3: Actualizar UI INMEDIATAMENTE
                         withContext(Dispatchers.Main) {
                             applyFiltersAndSearch(force = true)
                             isLoading.postValue(false)
                         }
 
-                        // PASO 6: Si es carga inicial, iniciar listeners
+                        // PASO 4: Cargar TODAS en background
+                        launch {
+                            Log.d("TodayFragmentVM", "Cargando TODAS las noticias en background...")
+
+                            val allNews = dataManager.fetchAllNeutralNewsForDates(selectedList)
+
+                            if (allNews.isNotEmpty()) {
+                                Log.d("TodayFragmentVM", "Background: ${allNews.size} noticias totales cargadas")
+
+                                // Guardar en caché
+                                dataManager.saveNeutralNewsToCache(allNews)
+
+                                // Actualizar helper con TODAS
+                                val sortedAll = NewsSorter.sortNeutralNews(allNews, currentSortType.value ?: TodaySortType.DATE_DESC)
+                                paginationHelper.setCachedNeutralAll(sortedAll)
+
+                                Log.d("TodayFragmentVM", "Background: ${sortedAll.size} noticias disponibles para paginación")
+                                // NO actualizar UI - solo cuando el usuario pagine
+                            }
+                        }
+
+                        // PASO 5: Si es carga inicial, iniciar listeners
                         if (isInitialLoad) {
                             loadCachedRelatedNews()
                             refreshNeutralNews()

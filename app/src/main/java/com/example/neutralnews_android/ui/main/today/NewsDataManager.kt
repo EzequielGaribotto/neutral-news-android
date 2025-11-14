@@ -209,18 +209,15 @@ class NewsDataManager(
     }
 
     /**
-     * Obtiene noticias neutrales de fechas específicas desde Firestore.
-     * Usado cuando el usuario selecciona días en el calendario.
-     * CRITICAL: Carga TODAS las noticias en memoria de una vez para permitir
-     * filtros y ordenación correctos sobre el conjunto completo.
+     * Obtiene las PRIMERAS N noticias de fechas específicas desde Firestore.
+     * CRITICAL: Solo carga las primeras para mostrar rápido en UI.
      */
-    suspend fun fetchNeutralNewsForDates(dates: List<java.util.Date>): List<NeutralNewsBean> {
+    suspend fun fetchFirstNeutralNewsForDates(dates: List<java.util.Date>, limit: Int = 10): List<NeutralNewsBean> {
         if (dates.isEmpty()) return emptyList()
 
         try {
             val allNews = mutableListOf<NeutralNewsBean>()
 
-            // Agrupar fechas consecutivas para minimizar queries
             val dateRanges = dates.map { date ->
                 val cal = java.util.Calendar.getInstance()
                 cal.time = date
@@ -239,9 +236,72 @@ class NewsDataManager(
                 Pair(start, end)
             }
 
-            Log.d("NewsDataManager", "Cargando TODAS las noticias para ${dateRanges.size} fechas seleccionadas...")
+            Log.d("NewsDataManager", "Cargando PRIMERAS $limit noticias para ${dateRanges.size} fechas...")
 
-            // CRITICAL: Hacer queries por cada rango de fecha y cargar TODAS en memoria
+            // CRITICAL: Cargar solo con límite para mostrar rápido
+            for ((start, end) in dateRanges) {
+                val startTimestamp = com.google.firebase.Timestamp(start / 1000, 0)
+                val endTimestamp = com.google.firebase.Timestamp(end / 1000, 0)
+
+                val snapshot = FirebaseFirestore.getInstance()
+                    .collection("neutral_news")
+                    .whereGreaterThanOrEqualTo("date", startTimestamp)
+                    .whereLessThanOrEqualTo("date", endTimestamp)
+                    .orderBy("date", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                    .limit(limit.toLong())
+                    .get()
+                    .await()
+
+                val newsForDate = snapshot.documents.mapNotNull { doc ->
+                    FirestoreDataMapper.mapNeutralNewsDocument(doc.data, doc.id)
+                }
+
+                allNews.addAll(newsForDate)
+
+                // Si ya tenemos suficientes, parar
+                if (allNews.size >= limit) break
+            }
+
+            Log.d("NewsDataManager", "Primeras ${allNews.size} noticias cargadas (para UI)")
+
+            return allNews.sortedByDescending { it.date ?: "" }.take(limit)
+        } catch (e: Exception) {
+            Log.e("NewsDataManager", "Error obteniendo primeras noticias: ${e.localizedMessage}")
+            return emptyList()
+        }
+    }
+
+    /**
+     * Obtiene TODAS las noticias neutrales de fechas específicas desde Firestore.
+     * CRITICAL: Se usa en BACKGROUND después de mostrar las primeras.
+     */
+    suspend fun fetchAllNeutralNewsForDates(dates: List<java.util.Date>): List<NeutralNewsBean> {
+        if (dates.isEmpty()) return emptyList()
+
+        try {
+            val allNews = mutableListOf<NeutralNewsBean>()
+
+            val dateRanges = dates.map { date ->
+                val cal = java.util.Calendar.getInstance()
+                cal.time = date
+                cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                cal.set(java.util.Calendar.MINUTE, 0)
+                cal.set(java.util.Calendar.SECOND, 0)
+                cal.set(java.util.Calendar.MILLISECOND, 0)
+                val start = cal.timeInMillis
+
+                cal.set(java.util.Calendar.HOUR_OF_DAY, 23)
+                cal.set(java.util.Calendar.MINUTE, 59)
+                cal.set(java.util.Calendar.SECOND, 59)
+                cal.set(java.util.Calendar.MILLISECOND, 999)
+                val end = cal.timeInMillis
+
+                Pair(start, end)
+            }
+
+            Log.d("NewsDataManager", "Cargando TODAS las noticias restantes en background...")
+
+            // Cargar TODAS sin límite
             for ((start, end) in dateRanges) {
                 val startTimestamp = com.google.firebase.Timestamp(start / 1000, 0)
                 val endTimestamp = com.google.firebase.Timestamp(end / 1000, 0)
@@ -260,13 +320,11 @@ class NewsDataManager(
                 allNews.addAll(newsForDate)
             }
 
-            Log.d("NewsDataManager", "Noticias TOTALES cargadas: ${allNews.size} (se mostrarán progresivamente)")
+            Log.d("NewsDataManager", "TODAS las noticias cargadas en background: ${allNews.size} totales")
 
-            // Retornar TODAS las noticias ordenadas por defecto
-            // El ViewModel decidirá cuántas mostrar visualmente
             return allNews.sortedByDescending { it.date ?: "" }
         } catch (e: Exception) {
-            Log.e("NewsDataManager", "Error obteniendo noticias para fechas: ${e.localizedMessage}")
+            Log.e("NewsDataManager", "Error obteniendo todas las noticias: ${e.localizedMessage}")
             return emptyList()
         }
     }
