@@ -70,7 +70,6 @@ class PaginationHelper(private val pageSize: Int = 10, private val initialDispla
     }
 
     fun sortCachedLists(sortType: TodaySortType) {
-
         cachedNeutralAll = when (sortType) {
             DATE_DESC -> cachedNeutralAll.sortedByDescending { it.date ?: it.createdAt ?: it.updatedAt ?: "" }
             DATE_ASC -> cachedNeutralAll.sortedBy { it.date ?: it.createdAt ?: it.updatedAt ?: "" }
@@ -81,7 +80,10 @@ class PaginationHelper(private val pageSize: Int = 10, private val initialDispla
             SOURCES_DESC -> cachedNeutralAll.sortedByDescending { it.sourceIds?.size ?: 0 }
             SOURCES_ASC -> cachedNeutralAll.sortedBy { it.sourceIds?.size ?: 0 }
         }
+
+        // CRITICAL: Resetear índice y limpiar IDs vistos para permitir mostrar desde el inicio
         cachedNeutralIndex = 0
+        seenNeutralIds.clear()
     }
 
 }

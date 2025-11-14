@@ -166,78 +166,79 @@ class DateFilterDialogFragment : DialogFragment() {
 
         val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
 
-        // Initially mark all days as unavailable; will update after DB query
+        // CRITICAL: Calcular los últimos 7 días para siempre permitir seleccionarlos
+        val last7Days = getLast7DaysSet()
+
+        // Initially mark days based on last 7 days rule
         for (d in 1..maxDay) {
             val it = DayItem(currentYear, currentMonth, d, isAvailable = false, isSelected = false)
             val dt = it.toDate()
-            if (dt != null && tempSelectedDates.any { sel -> sameDay(sel, dt) }) {
-                it.isSelected = true
-                it.isAvailable = true // keep previously selected dates selectable
+
+            if (dt != null) {
+                // Marcar como seleccionado si estaba previamente seleccionado
+                if (tempSelectedDates.any { sel -> sameDay(sel, dt) }) {
+                    it.isSelected = true
+                    it.isAvailable = true // keep previously selected dates selectable
+                }
+                // CRITICAL: Siempre permitir seleccionar los últimos 7 días
+                else if (isInLast7Days(dt, last7Days)) {
+                    it.isAvailable = true
+                }
             }
             items.add(it)
         }
 
         while (items.size % 7 != 0) items.add(DayItem(currentYear, currentMonth, 0, isAvailable = false))
 
-        // Update adapter immediately so UI shows the grid; days will appear disabled until DB check finishes
+        // Update adapter immediately so UI shows the grid
         adapter?.updateItems(items)
 
-        // Now fetch available days from local DB asynchronously and update the items' availability
+        // Now fetch available days from local DB asynchronously and merge with last 7 days
         lifecycleScope.launch {
             val available = withContext(Dispatchers.IO) { fetchAvailableDaysForMonth(currentYear, currentMonth) }
-            if (available.isNotEmpty()) {
-                for (i in items.indices) {
-                    val dayItem = items[i]
-                    if (dayItem.day != 0) {
-                        // Keep selected days selectable even if they aren't in the newly computed available set
-                        dayItem.isAvailable = dayItem.isSelected || available.contains(dayItem.day)
-                    }
-                }
-                adapter?.updateItems(items)
-            } else {
-                // Check if DB is empty; if DB has no news at all, mark all days available to allow selection
-                val dbHasAny = withContext(Dispatchers.IO) {
-                    try {
-                        val db = com.example.neutralnews_android.data.room.AppDatabase.getDatabase(requireContext())
-                        val newsCount = db.newsDao().getAllNews().size
-                        val neutralCount = db.neutralNewsDao().getAllNews().firstOrNull()?.size ?: 0
-                        (newsCount + neutralCount) > 0
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
 
-                if (!dbHasAny) {
-                    for (i in items.indices) {
-                        val dayItem = items[i]
-                        if (dayItem.day != 0) dayItem.isAvailable = true
-                    }
-                    adapter?.updateItems(items)
-                } else {
-                    // DB has entries but none in this month -> leave disabled; still set gray visuals
-                    adapter?.updateItems(items)
-                    // Also attach observers to retry when VM data updates (as before)
-                    val obs1 = vm.neutralNewsList
-                    val obs2 = vm.newsList
-                    val listener = { _: Any? ->
-                        lifecycleScope.launch {
-                            val avail2 = withContext(Dispatchers.IO) { fetchAvailableDaysForMonth(currentYear, currentMonth) }
-                            if (avail2.isNotEmpty()) {
-                                for (i in items.indices) {
-                                    val dayItem = items[i]
-                                    if (dayItem.day != 0) {
-                                        dayItem.isAvailable = dayItem.isSelected || avail2.contains(dayItem.day)
-                                    }
-                                }
-                                adapter?.updateItems(items)
-                            }
-                        }
-                    }
-                    obs1.observe(viewLifecycleOwner) { listener(it) }
-                    obs2.observe(viewLifecycleOwner) { listener(it) }
+            for (i in items.indices) {
+                val dayItem = items[i]
+                if (dayItem.day != 0) {
+                    val dt = dayItem.toDate()
+                    // Marcar como disponible si:
+                    // 1. Ya está seleccionado, O
+                    // 2. Está en los últimos 7 días, O
+                    // 3. Hay noticias en caché para ese día
+                    dayItem.isAvailable = dayItem.isSelected ||
+                                         (dt != null && isInLast7Days(dt, last7Days)) ||
+                                         available.contains(dayItem.day)
                 }
             }
+            adapter?.updateItems(items)
+
+            Log.d("DateFilterDlg", "Calendario actualizado: últimos 7 días + ${available.size} días con caché")
         }
+    }
+
+    /**
+     * Retorna un Set con las fechas de los últimos 7 días (hoy + 6 días anteriores).
+     */
+    private fun getLast7DaysSet(): Set<String> {
+        val set = mutableSetOf<String>()
+        val cal = Calendar.getInstance()
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+        for (i in 0 until 7) {
+            set.add(fmt.format(cal.time))
+            cal.add(Calendar.DAY_OF_YEAR, -1)
+        }
+
+        return set
+    }
+
+    /**
+     * Verifica si una fecha está dentro de los últimos 7 días.
+     */
+    private fun isInLast7Days(date: Date, last7DaysSet: Set<String>): Boolean {
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val dateStr = fmt.format(date)
+        return last7DaysSet.contains(dateStr)
     }
 
     // Query local DB (Room) for news timestamps in the given month/year, but prefer cached values in Prefs.

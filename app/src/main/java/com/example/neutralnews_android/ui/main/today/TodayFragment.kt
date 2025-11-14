@@ -49,6 +49,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -157,20 +158,35 @@ class TodayFragment : AppFragment() {
             if (applied) {
                 val arr = bundle.getLongArray("dates") ?: longArrayOf()
                 val dates = arr.map { Date(it) }
-                // Delegate to VM for persistence and applying the selection
-                vm.onDateFilterApplied(dates)
-                currentDateFilter = DateFilterType.MULTI_SELECT
+
+                // CRITICAL: Solo aplicar si realmente cambió la selección
+                val currentDates = vm.currentFilterData.selectedDates ?: emptyList()
+                val hasChanged = dates.size != currentDates.size ||
+                                !dates.all { newDate -> currentDates.any { existing -> sameDay(existing, newDate) } }
+
+                if (hasChanged) {
+                    // Delegate to VM for persistence and applying the selection
+                    vm.onDateFilterApplied(dates)
+                }
+
+                // Actualizar UI local
+                currentDateFilter = if (dates.isEmpty()) DateFilterType.ALL else DateFilterType.MULTI_SELECT
                 selectedDates.clear()
                 val fmt = SimpleDateFormat("dd/MM", Locale.getDefault())
                 for (d in dates) selectedDates.add(fmt.format(d))
-                // update UI color
-                if (dates.isNotEmpty()) binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
+
+                // Update UI color
+                if (dates.isNotEmpty()) {
+                    binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
+                } else {
+                    binding.imgDateFilter.clearColorFilter()
+                }
             }
             // liberar el flag para permitir abrir otro diálogo
             isDateDialogOpen = false
         }
 
-        // Restaurar selección persistida (si existe)
+        // Restaurar selección persistida (si existe) - solo una vez al inicio
         try {
             val restored = vm.restoreSelectedDatesFromPrefs()
             if (restored.isNotEmpty()) {
@@ -180,8 +196,20 @@ class TodayFragment : AppFragment() {
                 for (d in restored) selectedDates.add(fmt.format(d))
                 binding.imgDateFilter.setColorFilter(resources.getColor(R.color.orange, null))
             }
-        } catch (ignored: Exception) {
+        } catch (_: Exception) {
+            // Ignorar errores de restauración
         }
+    }
+
+    /**
+     * Helper para comparar si dos fechas son del mismo día.
+     */
+    private fun sameDay(a: Date, b: Date): Boolean {
+        val ca = Calendar.getInstance().apply { time = a }
+        val cb = Calendar.getInstance().apply { time = b }
+        return ca.get(Calendar.YEAR) == cb.get(Calendar.YEAR) &&
+               ca.get(Calendar.MONTH) == cb.get(Calendar.MONTH) &&
+               ca.get(Calendar.DAY_OF_MONTH) == cb.get(Calendar.DAY_OF_MONTH)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
