@@ -11,6 +11,7 @@ import com.example.neutralnews_android.data.Constants.News.NEWS
 import com.example.neutralnews_android.data.bean.filter.LocalFilterBean
 import com.example.neutralnews_android.data.bean.news.NeutralNewsBean
 import com.example.neutralnews_android.data.bean.news.NewsBean
+import com.example.neutralnews_android.data.bean.news.pressmedia.MediaBean
 import com.example.neutralnews_android.data.remote.SnapshotManager
 import com.example.neutralnews_android.data.room.AppDatabase
 import com.example.neutralnews_android.data.room.dao.NeutralNewsDao
@@ -23,6 +24,7 @@ import com.example.neutralnews_android.util.Prefs
 import com.example.neutralnews_android.util.string.normalized
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.android.gms.tasks.Task
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -38,6 +40,18 @@ import javax.inject.Inject
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+
+/**
+ * Extension function to convert Firebase Task to suspend function
+ */
+private suspend fun <T> Task<T>.await(): T = suspendCoroutine { continuation ->
+    addOnSuccessListener { result ->
+        continuation.resume(result)
+    }
+    addOnFailureListener { exception ->
+        throw exception
+    }
+}
 
 @HiltViewModel
 class TodayFragmentVM @Inject constructor(application: Application) : BaseViewModel(application) {
@@ -283,6 +297,9 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                         async { fetchNeutralNewsFromFirestoreSuspend(filterData = currentFilterData) }.await()
                     } else {
                         Log.d("TodayFragmentVM", "Noticias neutrales cargadas desde caché")
+                        // CRITICAL: Siempre verificar actualizaciones desde Firestore, incluso si hay caché
+                        // Esto asegura que si abrimos la app después de un tiempo, las noticias se actualicen
+                        verifyAndUpdateFromFirestore()
                         refreshNeutralNews()
                     }
                 }
@@ -291,6 +308,98 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                 isCacheLoading = false
             }
         }
+    }
+
+    /**
+     * Verifica actualizaciones desde Firestore en segundo plano sin mostrar loading.
+     * Actualiza la UI y el caché si hay cambios.
+     */
+    private suspend fun verifyAndUpdateFromFirestore() {
+        withContext(Dispatchers.IO) {
+            try {
+                Log.d("TodayFragmentVM", "Verificando actualizaciones desde Firestore...")
+
+                val snapshot = FirebaseFirestore.getInstance()
+                    .collection(NEUTRAL_NEWS)
+                    .get()
+                    .await()
+
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val fetchedNews = snapshot.documents.mapNotNull { doc ->
+                        FirestoreDataMapper.mapNeutralNewsDocument(doc.data, doc.id)
+                    }
+
+                    // Comparar y actualizar si hay cambios
+                    val hasUpdates = updateNeutralNewsListSilently(fetchedNews)
+
+                    if (hasUpdates) {
+                        Log.d("TodayFragmentVM", "Se encontraron actualizaciones, refrescando UI")
+                        withContext(Dispatchers.Main) {
+                            applyFiltersAndSearch(force = true)
+                        }
+                    } else {
+                        Log.d("TodayFragmentVM", "No hay actualizaciones desde Firestore")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("TodayFragmentVM", "Error verificando actualizaciones: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    /**
+     * Actualiza la lista de noticias sin mostrar indicadores de loading.
+     * Retorna true si hubo cambios.
+     */
+    private fun updateNeutralNewsListSilently(fetchedNews: List<NeutralNewsBean>): Boolean {
+        val existingIds = allNeutralNews.map { it.id }.toSet()
+        val fetchedIds = fetchedNews.map { it.id }.toSet()
+
+        // Noticias nuevas que no están en el caché
+        val brandNewNews = fetchedNews.filter { it.id !in existingIds }
+
+        // Noticias que existen pero pueden haber sido actualizadas
+        val potentialUpdates = fetchedNews.filter { it.id in existingIds }
+
+        val verifiedUpdates = potentialUpdates.filter { fetchedItem ->
+            val existing = allNeutralNews.find { it.id == fetchedItem.id }
+            existing?.let {
+                it.neutralTitle != fetchedItem.neutralTitle ||
+                it.neutralDescription != fetchedItem.neutralDescription ||
+                it.date != fetchedItem.date ||
+                it.updatedAt != fetchedItem.updatedAt
+            } ?: false
+        }
+
+        var hasChanges = false
+
+        // Actualizar noticias modificadas
+        if (verifiedUpdates.isNotEmpty()) {
+            verifiedUpdates.forEach { updated ->
+                val index = allNeutralNews.indexOfFirst { it.id == updated.id }
+                if (index >= 0) {
+                    allNeutralNews[index] = updated
+                }
+            }
+            saveNeutralNewsToLocalCache(verifiedUpdates)
+            Log.d("TodayFragmentVM", "Actualizadas silenciosamente ${verifiedUpdates.size} noticias")
+            hasChanges = true
+        }
+
+        // Agregar noticias nuevas al inicio
+        if (brandNewNews.isNotEmpty()) {
+            allNeutralNews.addAll(0, brandNewNews)
+            saveNeutralNewsToLocalCache(brandNewNews)
+            Log.d("TodayFragmentVM", "Agregadas silenciosamente ${brandNewNews.size} noticias nuevas")
+            hasChanges = true
+        }
+
+        // Reordenar si hubo cambios
+        if (hasChanges) {
+            paginationHelper.setCachedNeutralAll(allNeutralNews.sortedByDescending { it.date ?: "" })
+        }
+
+        return hasChanges
     }
 
     fun refreshNeutralNews() {
@@ -366,17 +475,30 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
         if (verifiedUpdatedNews.isNotEmpty()) {
             verifiedUpdatedNews.forEach { news ->
                 val index = allNeutralNews.indexOfFirst { it.id == news.id }
-                allNeutralNews[index] = news
+                if (index >= 0) {
+                    allNeutralNews[index] = news
+                }
             }
             saveNeutralNewsToLocalCache(verifiedUpdatedNews)
+            Log.d("TodayFragmentVM", "Actualizadas ${verifiedUpdatedNews.size} noticias")
         }
 
         if (brandNewNews.isNotEmpty()) {
-            allNeutralNews.addAll(brandNewNews)
+            // IMPORTANT: Insertar nuevas noticias AL PRINCIPIO para que aparezcan arriba
+            allNeutralNews.addAll(0, brandNewNews)
             saveNeutralNewsToLocalCache(brandNewNews)
+            Log.d("TodayFragmentVM", "Agregadas ${brandNewNews.size} noticias nuevas al inicio")
         }
 
-        return brandNewNews.isNotEmpty() || verifiedUpdatedNews.isNotEmpty()
+        // Re-aplicar ordenación y filtros para reflejar cambios
+        val hasChanges = brandNewNews.isNotEmpty() || verifiedUpdatedNews.isNotEmpty()
+        if (hasChanges) {
+            // Reordenar en el helper también
+            paginationHelper.setCachedNeutralAll(allNeutralNews.sortedByDescending { it.date ?: "" })
+            applyFiltersAndSearch(force = true)
+        }
+
+        return hasChanges
     }
 
     private fun saveNeutralNewsToLocalCache(newsList: List<NeutralNewsBean>) {
@@ -463,12 +585,21 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
             if (nextNeutral.isNotEmpty()) {
                 allNeutralNews.addAll(nextNeutral)
-            } else if (currentFilterData.selectedDates?.isNotEmpty() == true) {
-                withContext(Dispatchers.IO) {
-                    loadNewsFromDbForDateFilter()
+                Log.d("TodayFragmentVM", "Cargadas ${nextNeutral.size} noticias de paginación local")
+            } else {
+                // Si no hay más en la paginación local, intentar cargar desde DB si hay filtro de fechas
+                if (currentFilterData.selectedDates?.isNotEmpty() == true) {
+                    withContext(Dispatchers.IO) {
+                        loadNewsFromDbForDateFilter()
+                    }
+                } else {
+                    Log.d("TodayFragmentVM", "No hay más noticias para paginar")
                 }
             }
 
+            // Re-aplicar filtros y búsqueda para que aparezcan las noticias
+            // Esto es CRÍTICO para búsquedas: si el usuario busca algo que no está visible,
+            // necesitamos mostrarlo ahora
             withContext(Dispatchers.Default) {
                 applyFiltersAndSearch(force = true)
             }
@@ -558,10 +689,56 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
 
             dataLoaded = true
             messageEvent.postValue("Noticias neutrales cargadas desde caché: ${allNeutralNews.size}")
+
+            // CRITICAL: Aplicar filtros y búsqueda para que se muestren las noticias
+            withContext(Dispatchers.Main) {
+                applyFiltersAndSearch(force = true)
+            }
+
+            // También cargar noticias relacionadas del caché
+            loadCachedRelatedNews()
+
             true
         } else {
             messageEvent.postValue("Sin noticias neutrales en caché")
             false
+        }
+    }
+
+    private suspend fun loadCachedRelatedNews() {
+        try {
+            val regularNewsEntities = newsDao.getAllNews()
+            if (regularNewsEntities.isNotEmpty()) {
+                val mappedRegularNews = regularNewsEntities.map { entity ->
+                    val sourceMedium = MediaBean.entries.find {
+                        it.pressMedia.name?.normalized() == entity.sourceMediumName
+                    }?.pressMedia
+
+                    NewsBean(
+                        id = entity.id,
+                        title = entity.title,
+                        description = entity.description,
+                        category = entity.category,
+                        imageUrl = entity.imageUrl,
+                        link = entity.link,
+                        createdAt = if (entity.createdAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.createdAt) else null,
+                        pubDate = if (entity.pubDate != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.pubDate) else null,
+                        date = if (entity.pubDate != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.pubDate) else null,
+                        updatedAt = if (entity.updatedAt != Long.MIN_VALUE) DateFormatterHelper.formatDateToSpanish(entity.updatedAt) else null,
+                        sourceMedium = sourceMedium,
+                        group = entity.group,
+                        neutralScore = entity.neutralScore
+                    )
+                }
+
+                allNews.clear()
+                allNews.addAll(mappedRegularNews)
+                updateGroupsOfNews(allNews)
+
+                Log.d("TodayFragmentVM", "Noticias relacionadas cargadas desde caché: ${allNews.size}")
+            }
+        } catch (e: Exception) {
+            Log.e("TodayFragmentVM", "Error loading cached related news: ${e.localizedMessage}")
         }
     }
 
@@ -709,6 +886,10 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     dataLoaded = true
                     messageEvent.postValue("Noticias neutrales obtenidas con éxito. Total: ${sortedAll.size}")
                     saveNeutralNewsToLocalCache(fetchedNeutralNews)
+
+                    // CRITICAL: Aplicar filtros para que se muestren las noticias
+                    applyFiltersAndSearch(force = true)
+
                     continuation?.resume(true)
                 } else {
                     messageEvent.postValue("No se encontraron noticias neutrales en Firestore")
@@ -729,8 +910,25 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
     }
 
     fun fetchNewsByGroup(groupId: Int, filterData: LocalFilterBean, continuation: Continuation<Boolean>? = null) {
+        Log.d("TodayFragmentVM", "fetchNewsByGroup: verificando grupo $groupId")
+
         currentFilterData = filterData
 
+        // Primero verificar si ya tenemos noticias de este grupo en caché
+        val cachedGroupNews = groupsOfNews[groupId]
+        if (cachedGroupNews != null && cachedGroupNews.isNotEmpty()) {
+            Log.d("TodayFragmentVM", "Noticias del grupo $groupId ya en caché: ${cachedGroupNews.size}")
+            continuation?.resume(true)
+
+            // IMPORTANT: Aunque estén en caché, verificar actualizaciones en segundo plano sin loading
+            viewModelScope.launch(Dispatchers.IO) {
+                verifyAndUpdateGroupNewsFromFirestore(groupId)
+            }
+            return
+        }
+
+        // Si no está en caché, cargar desde Firestore
+        Log.d("TodayFragmentVM", "Cargando noticias del grupo $groupId desde Firestore")
         FirebaseFirestore.getInstance().collection(NEWS)
             .whereEqualTo(GROUP, groupId)
             .whereNotEqualTo(DESCRIPTION, "")
@@ -742,26 +940,125 @@ class TodayFragmentVM @Inject constructor(application: Application) : BaseViewMo
                     }
 
                     if (fetchedNews.isNotEmpty()) {
+                        // Eliminar entradas previas de ese grupo
                         val others = allNews.filter { it.group != groupId }
-                        allNews = mutableListOf()
+                        allNews.clear()
                         allNews.addAll(others)
                         allNews.addAll(fetchedNews)
 
                         paginationHelper.sortCachedLists(currentSortType.value ?: TodaySortType.DATE_DESC)
 
+                        // CRITICAL: Actualizar mapa de grupos
                         updateGroupsOfNews(allNews)
+
+                        // Actualizar UI con noticias agrupadas
                         newsList.postValue(NewsSorter.filterGroupedNews(allNews))
+
+                        // Guardar en caché local
                         saveNewsToLocalCache(fetchedNews)
 
                         messageEvent.postValue("Noticias del grupo $groupId cargadas: ${fetchedNews.size}")
+                        Log.d("TodayFragmentVM", "Grupo $groupId cargado exitosamente con ${fetchedNews.size} noticias")
                     }
+                    continuation?.resume(true)
+                } else {
+                    Log.d("TodayFragmentVM", "No se encontraron noticias para el grupo $groupId")
+                    messageEvent.postValue("No se encontraron noticias para el grupo $groupId")
+                    continuation?.resume(true)
                 }
-                continuation?.resume(true)
             }
             .addOnFailureListener { e ->
                 messageEvent.postValue("Error al obtener noticias del grupo $groupId: ${e.localizedMessage}")
+                Log.e("TodayFragmentVM", "Error fetching group news: ${e.localizedMessage}")
                 continuation?.resume(false)
             }
+    }
+
+    /**
+     * Verifica actualizaciones de noticias de un grupo específico desde Firestore.
+     * Se ejecuta en segundo plano sin mostrar loading indicators.
+     */
+    private suspend fun verifyAndUpdateGroupNewsFromFirestore(groupId: Int) {
+        try {
+            Log.d("TodayFragmentVM", "Verificando actualizaciones del grupo $groupId desde Firestore...")
+
+            val snapshot = FirebaseFirestore.getInstance()
+                .collection(NEWS)
+                .whereEqualTo(GROUP, groupId)
+                .whereNotEqualTo(DESCRIPTION, "")
+                .get()
+                .await()
+
+            if (snapshot != null && !snapshot.isEmpty) {
+                val fetchedNews = snapshot.documents.mapNotNull { doc ->
+                    FirestoreDataMapper.mapNewsDocument(doc.data ?: return@mapNotNull null, doc.id)
+                }
+
+                val hasUpdates = updateGroupNewsListSilently(groupId, fetchedNews)
+
+                if (hasUpdates) {
+                    Log.d("TodayFragmentVM", "Se encontraron actualizaciones para grupo $groupId, refrescando UI")
+                    withContext(Dispatchers.Main) {
+                        updateGroupsOfNews(allNews)
+                        newsList.postValue(NewsSorter.filterGroupedNews(allNews))
+                    }
+                } else {
+                    Log.d("TodayFragmentVM", "No hay actualizaciones para grupo $groupId")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TodayFragmentVM", "Error verificando actualizaciones del grupo $groupId: ${e.localizedMessage}")
+        }
+    }
+
+    /**
+     * Actualiza las noticias de un grupo sin mostrar indicadores de loading.
+     * Retorna true si hubo cambios.
+     */
+    private fun updateGroupNewsListSilently(groupId: Int, fetchedNews: List<NewsBean>): Boolean {
+        val existingGroupNews = allNews.filter { it.group == groupId }
+        val existingIds = existingGroupNews.map { it.id }.toSet()
+
+        // Noticias nuevas que no están en el caché
+        val brandNewNews = fetchedNews.filter { it.id !in existingIds }
+
+        // Noticias que existen pero pueden haber sido actualizadas
+        val potentialUpdates = fetchedNews.filter { it.id in existingIds }
+
+        val verifiedUpdates = potentialUpdates.filter { fetchedItem ->
+            val existing = existingGroupNews.find { it.id == fetchedItem.id }
+            existing?.let {
+                it.title != fetchedItem.title ||
+                it.description != fetchedItem.description ||
+                it.pubDate != fetchedItem.pubDate ||
+                it.updatedAt != fetchedItem.updatedAt
+            } ?: false
+        }
+
+        var hasChanges = false
+
+        // Actualizar noticias modificadas
+        if (verifiedUpdates.isNotEmpty()) {
+            verifiedUpdates.forEach { updated ->
+                val index = allNews.indexOfFirst { it.id == updated.id }
+                if (index >= 0) {
+                    allNews[index] = updated
+                }
+            }
+            saveNewsToLocalCache(verifiedUpdates)
+            Log.d("TodayFragmentVM", "Actualizadas silenciosamente ${verifiedUpdates.size} noticias del grupo $groupId")
+            hasChanges = true
+        }
+
+        // Agregar noticias nuevas
+        if (brandNewNews.isNotEmpty()) {
+            allNews.addAll(brandNewNews)
+            saveNewsToLocalCache(brandNewNews)
+            Log.d("TodayFragmentVM", "Agregadas silenciosamente ${brandNewNews.size} noticias nuevas al grupo $groupId")
+            hasChanges = true
+        }
+
+        return hasChanges
     }
 
     fun updateSortType(sortType: TodaySortType) {

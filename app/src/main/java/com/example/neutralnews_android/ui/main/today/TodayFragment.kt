@@ -686,20 +686,33 @@ class TodayFragment : AppFragment() {
 
                                 // Cargar noticias del grupo y abrir detalle en background
                                 viewLifecycleOwner.lifecycleScope.launch {
-                                    // Mostrar loader
-                                    binding.swRefresh.isRefreshing = true
+                                    val groupId = m.group ?: -1
+
+                                    // Verificar si las noticias del grupo ya están en caché
+                                    val relatedNews = vm.getRelatedNews(m)
+                                    val isInCache = relatedNews.isNotEmpty()
+
+                                    // Solo mostrar loader si NO están en caché
+                                    if (!isInCache) {
+                                        binding.swRefresh.isRefreshing = true
+                                    }
+
                                     try {
-                                        val groupId = m.group ?: -1
                                         if (groupId > 0) {
+                                            // Esto cargará las noticias si no están en caché
+                                            // O verificará actualizaciones en segundo plano si ya están
                                             vm.fetchNewsByGroupSuspend(groupId, filterData)
                                         }
                                     } catch (e: Exception) {
                                         Log.e("TodayFragment", "Error cargando noticias por grupo: ${e.localizedMessage}")
                                     } finally {
-                                        binding.swRefresh.isRefreshing = false
+                                        // Solo ocultar loader si lo mostramos
+                                        if (!isInCache) {
+                                            binding.swRefresh.isRefreshing = false
+                                        }
                                     }
 
-                                    // Obtener noticias relacionadas (puede haber sido actualizada por VM)
+                                    // Obtener noticias relacionadas actualizadas
                                     val updatedRelated = vm.getRelatedNews(m)
 
                                     // Abrir actividad de detalle
